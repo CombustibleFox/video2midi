@@ -23,6 +23,7 @@ MIN_SEAM_ROWS_PER_PX = 0.0019  # a real seam is a band of dark rows about this f
 MAX_BRIDGE_FRAMES = 4  # key-off dropouts up to this long between touching notes are animation, not silence
 MAX_SEAM_GAP = 25  # px; wider gaps are real rests that the key signal already shows
 MIN_SEAM_VOTES = 3  # frames that must agree on a seam
+SEAM_VOTE_FRACTION = 0.4  # ...and at least this share of what a typical, well-seen seam collects
 SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys: glow and flares live there
 
 
@@ -432,7 +433,7 @@ def seam_splits(L: Labels, fall: tuple[float, float]) -> dict[int, list[tuple[fl
     """Per key: (frame where the seam reaches the keys, seam thickness in frames) for each seam between
     back-to-back bars."""
     spf, yref = fall
-    out: dict[int, list[tuple[float, float]]] = {}
+    cands: list[tuple[int, list[tuple[float, int, float]]]] = []
     for k, obs in L.seams.items():
         pts = sorted(((f + (yref - y) / spf, y, thick / spf) for f, y, thick in obs))
         groups: list[list[tuple[float, int, float]]] = []
@@ -445,7 +446,17 @@ def seam_splits(L: Labels, fall: tuple[float, float]) -> dict[int, list[tuple[fl
             rows = [x[1] for x in g]
             # a real seam travels down the screen as the frames advance; a fixed artifact does not
             if len(g) >= MIN_SEAM_VOTES and max(rows) - min(rows) >= 1.5 * spf:
-                out.setdefault(k, []).append((float(np.median([x[0] for x in g])), float(np.median([x[2] for x in g]))))
+                cands.append((k, g))
+    # A real seam is seen on every frame it falls through; glow and particles make brief thin flickers that only
+    # collect a few votes. Judge each cluster against the well-supported ones in the same video.
+    strong = [len(g) for _, g in cands if len(g) >= 2 * MIN_SEAM_VOTES]
+    floor = MIN_SEAM_VOTES
+    if len(strong) >= 5:
+        floor = max(floor, int(SEAM_VOTE_FRACTION * np.median(strong)))
+    out: dict[int, list[tuple[float, float]]] = {}
+    for k, g in cands:
+        if len(g) >= floor:
+            out.setdefault(k, []).append((float(np.median([x[0] for x in g])), float(np.median([x[2] for x in g]))))
     return out
 
 

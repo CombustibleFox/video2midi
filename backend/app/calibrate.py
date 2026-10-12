@@ -246,7 +246,7 @@ def detect_hues(frames: list[np.ndarray], cal: Calibration, hit_offset: int = 4)
     second_share = float(np.sum(hist[circ(np.arange(360), p2) <= 15]) / max(1.0, hist.sum()))
     first = round(refine(p1), 1)
     found = [first]
-    if others[p2] > 0 and second_share >= 0.05:
+    if others[p2] > 0 and second_share >= 0.02:
         found.append(round(refine(p2), 1))
     # glow around a bar is the same hue family but dimmer than the bar itself: drop a "color" that never gets bright
     if len(found) == 2:

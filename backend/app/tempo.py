@@ -132,7 +132,10 @@ class TempoMap:
         else:
             T = np.concatenate([[0.0], self.T])
             B = np.concatenate([[0.0], self.B - b0])
-        return TempoMap(T, B, self.last_bpm)
+        tm = TempoMap(T, B, self.last_bpm)
+        # a new anchor in the middle of one steady tempo adds nothing
+        keep = [0] + [i for i in range(1, len(T)) if abs(tm.bpms[i] - tm.bpms[i - 1]) > 0.01]
+        return TempoMap(T[keep], B[keep], self.last_bpm) if len(keep) < len(T) else tm
 
     def shifted(self, dt: float) -> "TempoMap":
         return TempoMap(self.T + dt, self.B, self.last_bpm)

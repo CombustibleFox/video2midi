@@ -298,3 +298,24 @@ def test_white_hand_and_differently_colored_keys(tmp_path):
     res = run_extraction(path, tmp_path, cal, s)
     got = sorted((n["pitch"], n["hand"]) for n in res["notes"])
     assert got == sorted((p, h) for p, _, _, h in notes)
+
+
+def test_glow_particles_and_a_rarely_used_hand(tmp_path):
+    """Glossy videos: particle fountains, bloom and marbled bars; one hand plays only a few notes."""
+    notes = []
+    t = 0.5
+    for p in (60, 64, 67, 64):
+        for _ in range(3):  # touching repeats of the same key, split only by the seam between bars
+            notes.append((p, t, t + 0.4, "R"))
+            t += 0.4
+        t += 0.6
+    notes += [(48, 2.0, 2.6, "L"), (52, 6.0, 6.4, "L")]
+    path = tmp_path / "fx.avi"
+    render_video(path, notes, speed=300.0, seam_px=8, effects=True)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    assert len(cal.hues) == 2
+    res = run_extraction(path, tmp_path, cal, s)
+    t0 = min(a for _, a, _, _ in notes)
+    got = sorted((n["pitch"], n["hand"], round(n["start"], 1)) for n in res["notes"])
+    assert got == sorted((p, h, round(a - t0, 1)) for p, a, b, h in notes)
