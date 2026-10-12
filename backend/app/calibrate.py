@@ -152,6 +152,12 @@ def detect_keyboard(med: np.ndarray) -> dict:
     if len(centers) < 5:
         raise CalibrationError("could not find white key separators")
     ww0 = float(np.median(np.diff(centers)))
+    # drop dark blobs (logos, watermarks) that sit much closer to a separator than a key is wide
+    kept = [centers[0]]
+    for c in centers[1:]:
+        if c - kept[-1] >= 0.6 * ww0:
+            kept.append(c)
+    centers = kept
     # separators can be missed; count how many key widths each gap spans
     intervals = int(sum(max(1, round(d / ww0)) for d in np.diff(centers)))
     ww1 = (centers[-1] - centers[0]) / intervals

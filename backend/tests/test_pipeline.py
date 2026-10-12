@@ -91,3 +91,23 @@ def test_partial_keyboard(tmp_path):
     s = Settings(quantize="off")
     res = run_extraction(path, tmp_path, cal, s)
     assert sorted(n["pitch"] for n in res["notes"]) == sorted(p for p, *_ in notes)
+
+
+def test_back_to_back_repeats_are_split(tmp_path):
+    """The key stays lit across touching same-pitch notes; only the seam between the bars shows the split."""
+    notes = []
+    t = 0.5
+    for p, hand in ((60, "R"), (48, "L"), (64, "R")):
+        for _ in range(3):  # three 0.3 s repeats with no gap
+            notes.append((p, t, t + 0.3, hand))
+            t += 0.3
+        t += 0.6
+    path = tmp_path / "rep.avi"
+    render_video(path, notes, intro_s=0.0, speed=240.0, seam_px=4)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    got = sorted((n["pitch"], round(n["start"], 1)) for n in res["notes"])
+    t0 = 0.5
+    want = sorted((p, round(a - t0, 1)) for p, a, b, h in notes)
+    assert got == want
