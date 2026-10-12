@@ -29,14 +29,6 @@ def _hue_tolerance(hues: list[float]) -> float:
     return min(12.0, d / 4)
 
 
-def _rect_sums(mask: np.ndarray, boxes: np.ndarray) -> np.ndarray:
-    """Sum of mask inside each (xa, xb, ya, yb) box, via an integral image."""
-    integral = np.zeros((mask.shape[0] + 1, mask.shape[1] + 1), np.int32)
-    integral[1:, 1:] = mask.cumsum(0).cumsum(1)
-    xa, xb, ya, yb = boxes.T
-    return integral[yb, xb] - integral[ya, xb] - integral[yb, xa] + integral[ya, xa]
-
-
 @dataclass
 class Labels:
     labels: np.ndarray  # (frames, keys): 0 off, i+1 lit with color i
@@ -71,131 +63,293 @@ def lane_extents(cal: Calibration, boxes: dict, pitches: list[int], black: np.nd
     return e0, e1
 
 
-def label_frames(video_path: str, cal: Calibration, s: Settings, ref: np.ndarray | None = None,
-                 progress: Callable[[float], None] | None = None) -> Labels:
-    """Per frame, per key: 0 = off, i+1 = lit with color i. Returns (labels, pitches, fps, first_frame).
+def _hue_intervals(hue_cv: float, tol: float) -> list[tuple[int, int]]:
+    """Integer OpenCV hues within tol of hue_cv (circular), as inclusive intervals."""
+    ok = [h for h in range(180) if min(abs(h - hue_cv), 180 - abs(h - hue_cv)) <= tol]
+    out: list[tuple[int, int]] = []
+    for h in ok:
+        if out and out[-1][1] == h - 1:
+            out[-1] = (out[-1][0], h)
+        else:
+            out.append((h, h))
+    if len(out) > 1 and out[0][0] == 0 and out[-1][1] == 179:  # one interval wrapping around red
+        out = [(out[-1][0], 179), (0, out[0][1])] + out[1:-1]
+    return out
 
-    A key counts as pressed when its sample box is mostly filled with one of the hand colors.
-    """
+
+@dataclass
+class Plan:
+    """Everything the per-frame analysis needs, precomputed once. Picklable, so workers can share it."""
+    pitches: list[int]
+    black: np.ndarray
+    hues: list[float]
+    tol: float
+    top: int
+    bottom: int
+    x0: int
+    x1: int
+    kb_w: int
+    # lit-key detection: the pixels of every key's sample box, flattened in keyboard-crop coordinates
+    flat_idx: np.ndarray
+    starts: np.ndarray
+    area: np.ndarray
+    val_min: np.ndarray  # per pixel
+    # intro/outro detection
+    kb_y0: int
+    ref_band: np.ndarray | None
+    # bars above the keyboard
+    y_lo: int
+    y_hi: int
+    cut: int
+    bounds: np.ndarray  # sorted distinct column edges used for horizontal sums
+    ix: dict[str, np.ndarray]  # name -> index of each key's boundary within `bounds`
+    widths: dict[str, np.ndarray]
+    bar_ranges: list[list[tuple[int, int]]]  # per hue: hue intervals
+
+
+def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
     boxes = key_sample_boxes(cal)
     pitches = sorted(boxes)
-    # box coordinates relative to the keyboard crop
-    arr = np.array([(boxes[p][0] - cal.x0, boxes[p][1] - cal.x0, boxes[p][2] - cal.top, boxes[p][3] - cal.top)
-                    for p in pitches])
     black = np.array([boxes[p][4] for p in pitches])
-    area = (arr[:, 1] - arr[:, 0]) * (arr[:, 3] - arr[:, 2])
+    kb_w, kb_h = cal.x1 - cal.x0 + 1, cal.bottom - cal.top + 1
     hues = [h / 2 for h in (cal.hues or [])]
     tol = _hue_tolerance(cal.hues or [])
 
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cal.fps
-    first = int(s.start_s * fps)
-    last = int(s.end_s * fps) if s.end_s else (cal.frame_count or 10**9)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, first)
+    idx_parts, starts, area, vmin = [], [], [], []
+    pos = 0
+    for p in pitches:
+        xa, xb, ya, yb, blk = boxes[p]
+        xa, xb, ya, yb = xa - cal.x0, xb - cal.x0, ya - cal.top, yb - cal.top
+        yy, xx = np.mgrid[ya:yb, xa:xb]
+        idx_parts.append((yy * kb_w + xx).ravel())
+        starts.append(pos)
+        n = (xb - xa) * (yb - ya)
+        area.append(n)
+        vmin.append(np.full(n, KEY_VAL_BLACK if blk else KEY_VAL_WHITE, np.int16))
+        pos += n
 
     kb_y0 = cal.top + int(0.75 * (cal.bottom - cal.top))
-    ref_band = ref[kb_y0 : cal.bottom + 1, cal.x0 : cal.x1 + 1].astype(np.int16) if ref is not None else None
+    ref_band = ref[kb_y0 : cal.bottom + 1, cal.x0 : cal.x1 + 1][::2, ::2].copy() if ref is not None else None
 
-    # columns above the keyboard, used to find the seams between back-to-back notes of one key
     y_lo = max(0, cal.top - int(0.28 * cal.height))
     y_hi = max(y_lo + 20, cal.top - max(10, int(0.012 * cal.height)))
-    wa = np.array([max(0, int(round(boxes[p][0] - cal.x0 - (boxes[p][1] - boxes[p][0]) / 2))) for p in pitches])
-    wb = np.array([min(cal.x1 - cal.x0 + 1, int(round(boxes[p][0] - cal.x0 + (boxes[p][1] - boxes[p][0]) / 2)))
-                   for p in pitches])
-    wb = np.maximum(wb, wa + 1)
-    # Strips just inside the left and right edges of each key's bar. A seam notches the bar's rounded
-    # corners at both edges at once; a letter printed on the bar never reaches the edges.
-    ww = (cal.x1 - cal.x0 + 1) / cal.n_white
+    cut = max(2, (cal.top - int(SEAM_GLOW_FRAC * cal.height)) - y_lo)
+
+    ww = kb_w / cal.n_white
+    centers = np.array([(boxes[p][0] + boxes[p][1]) / 2 - cal.x0 for p in pitches])
+    half = np.array([(boxes[p][1] - boxes[p][0]) / 2 for p in pitches])
+    wa = np.maximum(np.round(centers - half).astype(int), 0)
+    wb = np.maximum(np.minimum(kb_w, np.round(centers + half).astype(int)), wa + 1)
     e0, e1 = lane_extents(cal, boxes, pitches, black, ref)
     inset, depth = 0.04 * ww, 0.14 * ww
-    maxx = cal.x1 - cal.x0 + 1
-    lw = np.clip(np.round(e0 + inset).astype(int), 0, maxx - 1)
-    le = np.maximum(np.clip(np.round(e0 + depth).astype(int), 0, maxx), lw + 1)
-    re = np.clip(np.round(e1 - inset).astype(int), 1, maxx)
-    rs = np.minimum(np.clip(np.round(e1 - depth).astype(int), 0, maxx - 1), re - 1)
-    # whole lane, for clean gaps between bars (the only seam signal that black keys' wide labels allow)
-    ga = np.clip(np.round(e0 + 2).astype(int), 0, maxx - 1)
-    gb = np.maximum(np.clip(np.round(e1 - 2).astype(int), 0, maxx), ga + 1)
-    rows: list[np.ndarray] = []
-    bottoms: list[np.ndarray] = []
-    seams: dict[int, list[tuple[int, int, int]]] = {}
-    n = max(1, last - first)
-    for idx in range(first, last):
+    lw = np.clip(np.round(e0 + inset).astype(int), 0, kb_w - 1)
+    le = np.maximum(np.clip(np.round(e0 + depth).astype(int), 0, kb_w), lw + 1)
+    re = np.clip(np.round(e1 - inset).astype(int), 1, kb_w)
+    rs = np.minimum(np.clip(np.round(e1 - depth).astype(int), 0, kb_w - 1), re - 1)
+    ga = np.clip(np.round(e0 + 2).astype(int), 0, kb_w - 1)
+    gb = np.maximum(np.clip(np.round(e1 - 2).astype(int), 0, kb_w), ga + 1)
+
+    cols = {"wa": wa, "wb": wb, "lw": lw, "le": le, "rs": rs, "re": re, "ga": ga, "gb": gb}
+    bounds = np.unique(np.concatenate([v for v in cols.values()]))
+    # each column edge maps to its position among the sorted distinct edges
+    ix = {k: np.searchsorted(bounds, v) for k, v in cols.items()}
+    widths = {"bar": wb - wa, "side": (le - lw) + (re - rs), "lane": gb - ga}
+    return Plan(pitches, black, hues, tol, cal.top, cal.bottom, cal.x0, cal.x1, kb_w,
+                np.concatenate(idx_parts), np.array(starts), np.array(area, float), np.concatenate(vmin),
+                kb_y0, ref_band, y_lo, y_hi, cut, bounds, ix, widths,
+                [_hue_intervals(h, tol) for h in hues])
+
+
+def _seams_in_frame(hi_rows: np.ndarray, lo_rows: np.ndarray, idx: int, y_lo: int) -> list[tuple[int, tuple[int, int, int]]]:
+    """Seams between two bars: a short run of 'gap' rows with solid bar just above and just below."""
+    cut, K = lo_rows.shape
+    LT, HT = lo_rows.T, hi_rows.T  # (keys, rows)
+    prev = np.zeros_like(LT)
+    prev[:, 1:] = LT[:, :-1]
+    nxt = np.zeros_like(LT)
+    nxt[:, :-1] = LT[:, 1:]
+    ks, g0 = np.nonzero(LT & ~prev)  # run starts and ends come out in the same (key, row) order
+    _, g1 = np.nonzero(LT & ~nxt)
+    if not len(ks):
+        return []
+    csh = np.zeros((K, cut + 1), np.int32)
+    csh[:, 1:] = HT.cumsum(axis=1)
+    above = csh[ks, g0] - csh[ks, np.maximum(0, g0 - 3)] > 0
+    below = csh[ks, np.minimum(cut, g1 + 4)] - csh[ks, g1 + 1] > 0
+    ok = (g1 - g0 + 1 <= MAX_SEAM_GAP) & above & below
+    return [(int(k), (idx, int(y_lo + (a + b) // 2), int(y_lo + (a + b) // 2)))
+            for k, a, b in zip(ks[ok], g0[ok], g1[ok])]
+
+
+def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
+    """One frame -> (key labels, bar bottoms, seams)."""
+    K = len(plan.pitches)
+    lab = np.zeros(K, np.uint8)
+    bot = np.full(K, -1, np.int16)
+    seams: list[tuple[int, tuple[int, int, int]]] = []
+    if plan.ref_band is not None:
+        band = frame[plan.kb_y0 : plan.bottom + 1 : 2, plan.x0 : plan.x1 + 1 : 2]
+        # lit keys are a small part of the band; an intro/outro screen differs almost everywhere
+        if np.count_nonzero(cv2.absdiff(band, plan.ref_band).max(axis=2) < 60) <= 0.5 * band.shape[0] * band.shape[1]:
+            return lab, bot, seams
+    if not plan.hues:
+        return lab, bot, seams
+
+    bgr = frame[plan.top : plan.bottom + 1, plan.x0 : plan.x1 + 1].reshape(-1, 3)[plan.flat_idx]
+    px = cv2.cvtColor(bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)  # only the key boxes
+    Hp = px[:, 0].astype(np.int16)
+    bright = (px[:, 1] >= KEY_SAT_MIN) & (px[:, 2] >= plan.val_min)
+    fracs = []
+    for hc in plan.hues:
+        d = np.abs(Hp - hc)
+        near = np.minimum(d, 180 - d) <= plan.tol
+        fracs.append(np.add.reduceat((bright & near).astype(np.int32), plan.starts) / plan.area)
+    fr = np.stack(fracs)
+    lab = np.where(fr.max(axis=0) > ON_FRACTION, fr.argmax(axis=0) + 1, 0).astype(np.uint8)
+
+    reg = cv2.cvtColor(frame[plan.y_lo : plan.y_hi, plan.x0 : plan.x1 + 1], cv2.COLOR_BGR2HSV)
+    bar = None
+    for intervals in plan.bar_ranges:
+        for lo, hi in intervals:
+            m = cv2.inRange(reg, (lo, BAR_SAT_MIN, BAR_VAL_MIN), (hi, 255, 255))
+            bar = m if bar is None else cv2.bitwise_or(bar, m)
+    white = cv2.inRange(reg, (0, 0, LABEL_VAL_MIN + 1), (179, LABEL_SAT_MAX - 1, 255))
+
+    def cumulative(mask: np.ndarray) -> np.ndarray:
+        # per-row running count of mask pixels, read at the column edges only (via the integral image)
+        integral = cv2.integral(mask, sdepth=cv2.CV_32S)
+        return (integral[1:, plan.bounds] - integral[:-1, plan.bounds]) // 255
+
+    cb, cw = cumulative(bar), cumulative(white)
+    ix, wd = plan.ix, plan.widths
+    rowfrac = (cb[:, ix["wb"]] - cb[:, ix["wa"]]) / wd["bar"]
+    is_bar = rowfrac > 0.5
+    has = is_bar.any(axis=0)
+    bot = np.where(has, plan.y_lo + is_bar.shape[0] - 1 - is_bar[::-1].argmax(axis=0), -1).astype(np.int16)
+
+    cut = plan.cut
+    cb, cw = cb[:cut], cw[:cut]
+    side = ((cb[:, ix["le"]] - cb[:, ix["lw"]]) + (cb[:, ix["re"]] - cb[:, ix["rs"]])) / wd["side"]
+    lane = (cb[:, ix["gb"]] - cb[:, ix["ga"]]) / wd["lane"]
+    lane_white = (cw[:, ix["gb"]] - cw[:, ix["ga"]]) / wd["lane"]
+    # clean gap: nothing of the bar color across the lane and no white label pixels. Edge notch (white
+    # keys only): the rounded corners of two touching bars dent both edges while the middle stays solid.
+    lo_rows = ((lane < 0.12) & (lane_white < 0.03)) | (~plan.black & (side < 0.5))
+    hi_rows = (lane > 0.5) & (plan.black | (side > 0.7))
+    seams = _seams_in_frame(hi_rows, lo_rows, idx, plan.y_lo)
+    return lab, bot, seams
+
+
+def _open_at(video_path: str, frame: int) -> cv2.VideoCapture:
+    """Open the video positioned so that the next read() returns `frame`."""
+    cap = cv2.VideoCapture(str(video_path))
+    if frame:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
+        if int(cap.get(cv2.CAP_PROP_POS_FRAMES)) != frame:  # container can't seek exactly: decode up to it
+            cap.release()
+            cap = cv2.VideoCapture(str(video_path))
+            for _ in range(frame):
+                cap.grab()
+    return cap
+
+
+def _analyse_range(video_path: str, plan: Plan, a: int, b: int, on_frame=None):
+    cap = _open_at(video_path, a)
+    labs, bots, seams = [], [], []
+    for idx in range(a, b):
         ok, frame = cap.read()
         if not ok:
             break
-        lab = np.zeros(len(pitches), np.uint8)
-        bot = np.full(len(pitches), -1, np.int16)
-        present = True
-        if ref_band is not None:
-            band = frame[kb_y0 : cal.bottom + 1, cal.x0 : cal.x1 + 1].astype(np.int16)
-            # lit keys are a small part of the band; an intro/outro screen differs almost everywhere
-            present = float((np.abs(band - ref_band).max(axis=2) < 60).mean()) > 0.5
-        if present and hues:
-            hsv = cv2.cvtColor(frame[cal.top : cal.bottom + 1, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV)
-            H = hsv[..., 0].astype(np.int16)
-            lit = hsv[..., 1] >= KEY_SAT_MIN
-            # black keys often have a colored sheen when idle, so demand a brighter color for them
-            bright_w = lit & (hsv[..., 2] >= KEY_VAL_WHITE)
-            bright_b = lit & (hsv[..., 2] >= KEY_VAL_BLACK)
-            fracs = []
-            for hc in hues:
-                d = np.abs(H - hc)
-                near = np.minimum(d, 180 - d) <= tol
-                sums_w = _rect_sums(bright_w & near, arr)
-                sums_b = _rect_sums(bright_b & near, arr)
-                fracs.append(np.where(black, sums_b, sums_w) / area)
-            fr = np.stack(fracs)
-            on = fr.max(axis=0) > ON_FRACTION
-            lab = np.where(on, fr.argmax(axis=0) + 1, 0).astype(np.uint8)
-
-            reg = cv2.cvtColor(frame[y_lo:y_hi, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV)
-            RH = reg[..., 0].astype(np.int16)
-            rbase = (reg[..., 1] >= BAR_SAT_MIN) & (reg[..., 2] >= BAR_VAL_MIN)
-            bar = np.zeros(RH.shape, bool)
-            for hc in hues:
-                d = np.abs(RH - hc)
-                bar |= rbase & (np.minimum(d, 180 - d) <= tol)
-            cs = np.zeros((bar.shape[0], bar.shape[1] + 1), np.int32)
-            cs[:, 1:] = bar.cumsum(axis=1)
-            rowfrac = (cs[:, wb] - cs[:, wa]) / (wb - wa)  # (rows, keys)
-            is_bar = rowfrac > 0.5
-            has = is_bar.any(axis=0)
-            bot = np.where(has, y_lo + is_bar.shape[0] - 1 - is_bar[::-1].argmax(axis=0), -1).astype(np.int16)
-            side = ((cs[:, le] - cs[:, lw]) + (cs[:, re] - cs[:, rs])) / ((le - lw) + (re - rs))
-            cut = max(2, (cal.top - int(SEAM_GLOW_FRAC * cal.height)) - y_lo)
-            lane = (cs[:, gb] - cs[:, ga]) / (gb - ga)
-            # label glyphs are white; the gap between two bars is plain background, never white
-            white = (reg[..., 1] < LABEL_SAT_MAX) & (reg[..., 2] > LABEL_VAL_MIN)
-            ws = np.zeros((white.shape[0], white.shape[1] + 1), np.int32)
-            ws[:, 1:] = white.cumsum(axis=1)
-            lane_white = (ws[:, gb] - ws[:, ga]) / (gb - ga)
-            # clean gap: nothing of the bar color across the lane. Edge notch (white keys only): the
-            # rounded corners of two touching bars dent both edges, while the middle stays solid.
-            lo_rows = ((lane[:cut] < 0.12) & (lane_white[:cut] < 0.03)) | (~black & (side[:cut] < 0.5))
-            hi_rows = (lane[:cut] > 0.5) & (black | (side[:cut] > 0.7))
-            for k in np.flatnonzero(hi_rows.any(axis=0)):
-                lo_k = np.flatnonzero(lo_rows[:, k])
-                if not len(lo_k):
-                    continue
-                hi_k = hi_rows[:, k]
-                splits_at = np.flatnonzero(np.diff(lo_k) > 1) + 1
-                for seg in np.split(lo_k, splits_at):
-                    g0, g1 = seg[0], seg[-1]
-                    # a seam sits between two bars: solid bar just above and just below the dark rows
-                    if (len(seg) <= MAX_SEAM_GAP and hi_k[max(0, g0 - 3) : g0].any()
-                            and hi_k[g1 + 1 : g1 + 4].any()):
-                        y = int(y_lo + (g0 + g1) // 2)
-                        seams.setdefault(int(k), []).append((idx, y, y))
-        rows.append(lab)
-        bottoms.append(bot)
-        if progress and (idx - first) % 100 == 0:
-            progress(min((idx - first) / n, 1.0))
+        lab, bot, sm = analyse_frame(plan, frame, idx)
+        labs.append(lab)
+        bots.append(bot)
+        seams.extend(sm)
+        if on_frame:
+            on_frame(idx)
     cap.release()
-    if not rows:
-        empty = np.zeros((0, len(pitches)), np.uint8)
-        return Labels(empty, pitches, fps, first, empty.astype(np.int16), {}, (y_lo, y_hi))
-    return Labels(np.stack(rows), pitches, fps, first, np.stack(bottoms), seams, (y_lo, y_hi))
+    return labs, bots, seams
+
+
+_worker: dict = {}
+
+
+def _init_worker(video_path: str, plan: Plan) -> None:
+    cv2.setNumThreads(1)  # one process per core already; avoid oversubscription
+    _worker["video"], _worker["plan"] = video_path, plan
+
+
+def _worker_chunk(a: int, b: int):
+    labs, bots, seams = _analyse_range(_worker["video"], _worker["plan"], a, b)
+    return a, labs, bots, seams
+
+
+MIN_PARALLEL_FRAMES = 240
+
+
+def auto_workers() -> int:
+    import os
+
+    return max(1, min(os.cpu_count() or 1, 8))
+
+
+def label_frames(video_path: str, cal: Calibration, s: Settings, ref: np.ndarray | None = None,
+                 progress: Callable[[float], None] | None = None) -> Labels:
+    """Per frame, per key: 0 = off, i+1 = lit with color i, plus the bar information used to split repeats.
+
+    A key counts as pressed when its sample box is mostly filled with one of the hand colors. Frames are
+    independent of each other, so long videos are split into chunks analysed by a pool of processes.
+    """
+    plan = make_plan(cal, s, ref)
+    fps = cal.fps
+    first = int(s.start_s * fps)
+    last = int(s.end_s * fps) if s.end_s else (cal.frame_count or 10**9)
+    n = max(1, last - first)
+    workers = s.workers if s.workers > 0 else auto_workers()
+    rows_lab: list[np.ndarray] = []
+    rows_bot: list[np.ndarray] = []
+    seam_list: list[tuple[int, tuple[int, int, int]]] = []
+
+    if workers <= 1 or n < MIN_PARALLEL_FRAMES:
+        def on_frame(idx: int) -> None:
+            if progress and (idx - first) % 100 == 0:
+                progress(min((idx - first) / n, 1.0))
+
+        rows_lab, rows_bot, seam_list = _analyse_range(video_path, plan, first, last, on_frame)
+    else:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        size = max(60, -(-n // (workers * 4)))
+        chunks = [(a, min(a + size, last)) for a in range(first, last, size)]
+        results: dict[int, tuple] = {}
+        done = 0
+        # 'spawn' on every platform: forking a process that already runs OpenCV threads can deadlock
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init_worker,
+                                 initargs=(str(video_path), plan)) as pool:
+            futures = [pool.submit(_worker_chunk, a, b) for a, b in chunks]
+            for fut in as_completed(futures):
+                a, labs, bots, seams = fut.result()
+                results[a] = (labs, bots, seams)
+                done += len(labs)
+                if progress:
+                    progress(min(done / n, 1.0))
+        for a, b in chunks:  # reassemble in order; stop at the first chunk that ran out of video
+            labs, bots, seams = results[a]
+            rows_lab += labs
+            rows_bot += bots
+            seam_list += seams
+            if len(labs) < b - a:
+                break
+
+    seams: dict[int, list[tuple[int, int, int]]] = {}
+    for k, obs in sorted(seam_list, key=lambda t: (t[0], t[1][0])):
+        seams.setdefault(k, []).append(obs)
+    K = len(plan.pitches)
+    if not rows_lab:
+        empty = np.zeros((0, K), np.uint8)
+        return Labels(empty, plan.pitches, fps, first, empty.astype(np.int16), {}, (plan.y_lo, plan.y_hi))
+    return Labels(np.stack(rows_lab), plan.pitches, fps, first, np.stack(rows_bot), seams, (plan.y_lo, plan.y_hi))
 
 
 def _runs(seq: np.ndarray) -> list[list[int]]:

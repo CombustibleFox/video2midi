@@ -23,13 +23,14 @@ def main() -> None:
     ap.add_argument("--start", type=float, default=0.0, help="start second")
     ap.add_argument("--end", type=float, help="end second")
     ap.add_argument("--first-midi", type=int, help="override MIDI pitch of the leftmost key")
+    ap.add_argument("--workers", type=int, default=0, help="processes for frame analysis (0 = one per core)")
     ap.add_argument("--calibrate-only", action="store_true", help="only write preview.png and print detection")
     a = ap.parse_args()
 
     work = Path(a.workdir or tempfile.mkdtemp(prefix="video2midi-"))
     work.mkdir(parents=True, exist_ok=True)
     s = Settings.from_dict({"quantize": a.quantize, "tempo_override": a.tempo, "split_pitch": a.split,
-                            "start_s": a.start, "end_s": a.end})
+                            "start_s": a.start, "end_s": a.end, "workers": a.workers})
     if a.source.startswith(("http://", "https://")):
         video = download_youtube(a.source, work, lambda st, f, m: print(f"\r{m} {f:4.0%}", end=""),
                                  a.cookies_from_browser)

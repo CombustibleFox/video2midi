@@ -195,8 +195,12 @@ def detect_keyboard(med: np.ndarray) -> dict:
 
 
 def detect_hues(frames: list[np.ndarray], cal: Calibration, hit_offset: int = 4) -> list[float]:
-    """Cluster saturated pixels above the keyboard by hue. Returns 1 or 2 hues (degrees)."""
-    y1 = max(1, cal.top - hit_offset)
+    """The one or two note colors above the keyboard, as hues in degrees.
+
+    Looks at the saturated pixels in a band above the keyboard (clear of the red line and glow at its
+    top edge) and picks the two strongest hue peaks. Deterministic, unlike clustering with random seeds.
+    """
+    y1 = max(1, cal.top - max(hit_offset, int(0.05 * cal.height)))
     y0 = max(0, y1 - 200)
     hues = []
     for f in frames:
@@ -208,19 +212,29 @@ def detect_hues(frames: list[np.ndarray], cal: Calibration, hit_offset: int = 4)
     h = np.concatenate(hues) if hues else np.empty(0, np.float32)
     if len(h) < 200:
         raise CalibrationError("no colored falling notes found above the keyboard")
-    ang = np.deg2rad(h)
-    feats = np.stack([np.cos(ang), np.sin(ang)], axis=1).astype(np.float32)
-    crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 1e-3)
-    _, labels, centers = cv2.kmeans(feats, 2, None, crit, 5, cv2.KMEANS_PP_CENTERS)
-    labels = labels.ravel()
-    cdeg = [float(np.rad2deg(np.arctan2(c[1], c[0])) % 360) for c in centers]
-    sep = abs(cdeg[0] - cdeg[1])
-    sep = min(sep, 360 - sep)
-    frac = min(np.mean(labels == 0), np.mean(labels == 1))
-    if sep < 30 or frac < 0.05:
-        big = int(np.argmax(np.bincount(labels)))
-        return [round(cdeg[big], 1)]
-    return [round(c, 1) for c in cdeg]
+
+    hist = np.bincount(np.round(h).astype(int) % 360, minlength=360).astype(float)
+    # circular smoothing over +-8 degrees
+    smooth = sum(np.roll(hist, d) for d in range(-8, 9))
+
+    def circ(a: np.ndarray | float, b: float) -> np.ndarray:
+        d = np.abs(np.asarray(a) - b) % 360
+        return np.minimum(d, 360 - d)
+
+    def refine(peak: float) -> float:
+        near = h[circ(h, peak) <= 20]
+        ang = np.deg2rad(near)
+        return float(np.rad2deg(np.arctan2(np.sin(ang).mean(), np.cos(ang).mean())) % 360)
+
+    p1 = int(np.argmax(smooth))
+    others = smooth.copy()
+    others[circ(np.arange(360), p1) < 30] = 0  # a second color must be a different hue
+    p2 = int(np.argmax(others))
+    second_share = float(np.sum(hist[circ(np.arange(360), p2) <= 15]) / max(1.0, hist.sum()))
+    first = round(refine(p1), 1)
+    if others[p2] == 0 or second_share < 0.05:
+        return [first]
+    return [first, round(refine(p2), 1)]
 
 
 def calibrate(video_path: str, n_samples: int = 40, hit_offset: int = 4):

@@ -122,3 +122,23 @@ def test_labels_on_bars_do_not_split_notes(tmp_path):
     cal = run_calibration(path, tmp_path, s)
     res = run_extraction(path, tmp_path, cal, s)
     assert sorted(n["pitch"] for n in res["notes"]) == [48, 60, 61, 66]
+
+
+def test_parallel_matches_serial(tmp_path):
+    """Frame analysis split across processes must give exactly the same result as one process."""
+    import numpy as np
+
+    from app.calibrate import calibrate
+    from app.extract import MIN_PARALLEL_FRAMES, label_frames
+
+    notes = [(48 + (i * 7) % 30, i * 0.45, i * 0.45 + 0.3, "R" if i % 2 else "L") for i in range(30)]
+    path = tmp_path / "long.avi"
+    render_video(path, notes, speed=240.0, seam_px=4)
+    cal, med, _ = calibrate(str(path))
+    assert cal.frame_count > MIN_PARALLEL_FRAMES
+    serial = label_frames(str(path), cal, Settings(workers=1), med)
+    parallel = label_frames(str(path), cal, Settings(workers=2), med)
+    assert serial.labels.shape == parallel.labels.shape == (cal.frame_count, len(serial.pitches))
+    assert np.array_equal(serial.labels, parallel.labels)
+    assert np.array_equal(serial.bottoms, parallel.bottoms)
+    assert serial.seams == parallel.seams

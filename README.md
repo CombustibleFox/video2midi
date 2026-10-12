@@ -52,3 +52,7 @@ pyinstaller --noconfirm video2midi.spec     # -> backend/dist/video2midi(.exe)
 Run it: it starts the server and opens http://127.0.0.1:8000 in your browser. The GitHub Actions workflow
 `Build executables` (Actions tab, Run workflow) builds Windows, macOS and Linux versions as downloadable artifacts.
 ffmpeg is only needed if a downloaded video can't be decoded directly; install it and put it on the PATH.
+
+## Performance
+
+Frame analysis runs in parallel: the video is cut into chunks and a pool of worker processes (one per CPU core, up to 8) analyses them, then the results are stitched back together in order. The output is identical to the single-process result. Use `--workers N` on the CLI (`--workers 1` to disable) or the `workers` setting in the API. On a 4-core machine a 3.7 minute 1686x948 video takes about 40 seconds.

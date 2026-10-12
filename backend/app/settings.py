@@ -16,6 +16,7 @@ class Settings:
     end_s: float | None = None
     hit_offset: int = 4  # pixels above the keyboard where note colors are learned
     trim_to_first_note: bool = True
+    workers: int = 0  # processes for frame analysis; 0 = one per CPU core (max 8)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Settings":

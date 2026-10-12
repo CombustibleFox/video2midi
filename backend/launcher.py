@@ -1,4 +1,5 @@
 """Entry point for the packaged app: starts the server and opens the browser."""
+import multiprocessing
 import socket
 import threading
 import time
@@ -21,6 +22,7 @@ def free_port(preferred: int = 8000) -> int:
 
 
 def main() -> None:
+    multiprocessing.freeze_support()  # the frame-analysis workers re-launch this executable
     port = free_port()
     url = f"http://127.0.0.1:{port}/"
     threading.Thread(target=lambda: (time.sleep(1.5), webbrowser.open(url)), daemon=True).start()
