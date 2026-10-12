@@ -16,6 +16,7 @@ ON_FRACTION = 0.6
 BAR_SAT_MIN, BAR_VAL_MIN = 40, 90  # falling bars can be paler than the lit keys
 LABEL_SAT_MAX, LABEL_VAL_MIN = 62, 150  # light, desaturated pixels: note-name labels (gray-white on dark bars)
 DARK_LINE_RATIO, DARK_LINE_MIN_LEVEL = 0.72, 130  # a seam row is this much dimmer than the bar around it
+MIN_SEAM_ROWS_PER_PX = 0.0019  # a real seam is a band of dark rows about this fraction of the frame height thick
 MAX_SEAM_GAP = 25  # px; wider gaps are real rests that the key signal already shows
 MIN_SEAM_VOTES = 3  # frames that must agree on a seam
 SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys: glow and flares live there
@@ -102,6 +103,7 @@ class Plan:
     y_lo: int
     y_hi: int
     cut: int
+    min_seam_rows: int  # thinner dark lines are label outlines, not the gap between two bars
     bounds: np.ndarray  # sorted distinct column edges used for horizontal sums
     ix: dict[str, np.ndarray]  # name -> index of each key's boundary within `bounds`
     widths: dict[str, np.ndarray]
@@ -159,11 +161,12 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
     widths = {"bar": wb - wa, "side": (le - lw) + (re - rs), "lane": gb - ga}
     return Plan(pitches, black, hues, tol, cal.top, cal.bottom, cal.x0, cal.x1, kb_w,
                 np.concatenate(idx_parts), np.array(starts), np.array(area, float), np.concatenate(vmin),
-                kb_y0, ref_band, y_lo, y_hi, cut, bounds, ix, widths, ga, gb,
+                kb_y0, ref_band, y_lo, y_hi, cut,
+                max(1, int(round(MIN_SEAM_ROWS_PER_PX * cal.height))), bounds, ix, widths, ga, gb,
                 [_hue_intervals(h, tol) for h in hues])
 
 
-def _seams_in_frame(hi_rows: np.ndarray, lo_rows: np.ndarray, idx: int, y_lo: int) -> list[tuple[int, tuple[int, int, int]]]:
+def _seams_in_frame(hi_rows: np.ndarray, lo_rows: np.ndarray, idx: int, y_lo: int, min_rows: int = 1) -> list[tuple[int, tuple[int, int, int]]]:
     """Seams between two bars: a short run of 'gap' rows with solid bar just above and just below."""
     cut, K = lo_rows.shape
     LT, HT = lo_rows.T, hi_rows.T  # (keys, rows)
@@ -179,7 +182,7 @@ def _seams_in_frame(hi_rows: np.ndarray, lo_rows: np.ndarray, idx: int, y_lo: in
     csh[:, 1:] = HT.cumsum(axis=1)
     above = csh[ks, g0] - csh[ks, np.maximum(0, g0 - 3)] > 0
     below = csh[ks, np.minimum(cut, g1 + 4)] - csh[ks, g1 + 1] > 0
-    ok = (g1 - g0 + 1 <= MAX_SEAM_GAP) & above & below
+    ok = (g1 - g0 + 1 >= min_rows) & (g1 - g0 + 1 <= MAX_SEAM_GAP) & above & below
     return [(int(k), (idx, int(y_lo + (a + b) // 2), int(y_lo + (a + b) // 2)))
             for k, a, b in zip(ks[ok], g0[ok], g1[ok])]
 
@@ -254,7 +257,7 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
     dark_line = ~plan.black & (lane > 0.5) & (level >= DARK_LINE_MIN_LEVEL) & (lane_max < DARK_LINE_RATIO * level)
     lo_rows = lo_rows | dark_line
     hi_rows = hi_rows & ~dark_line
-    seams = _seams_in_frame(hi_rows, lo_rows, idx, plan.y_lo)
+    seams = _seams_in_frame(hi_rows, lo_rows, idx, plan.y_lo, plan.min_seam_rows)
     return lab, bot, seams
 
 

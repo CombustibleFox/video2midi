@@ -171,3 +171,31 @@ def test_dark_line_seams_split_white_key_repeats(tmp_path):
     res = run_extraction(path, tmp_path, cal, s)
     got = sorted((n["pitch"], round(n["start"], 1)) for n in res["notes"])
     assert got == sorted((p, round(a - 0.5, 1)) for p, a, b, h in notes)
+
+
+def test_thin_label_outline_is_not_a_seam_at_1080p(tmp_path):
+    """The top edge of a label box is a one-row dark line across a narrow bar; a real seam is a thicker band."""
+    notes = [(61, 0.5, 1.4, "R"), (66, 2.0, 2.9, "R"), (48, 0.5, 1.4, "L"), (60, 2.0, 2.9, "L"), (58, 3.2, 4.1, "L")]
+    path = tmp_path / "outline1080.avi"
+    render_video(path, notes, w=1920, h=1080, kb_h=180, speed=360.0, seam_px=6, labels=True, outline_rows=1)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    assert sorted(n["pitch"] for n in res["notes"]) == [48, 58, 60, 61, 66]
+
+
+def test_thick_seam_still_splits_at_1080p(tmp_path):
+    notes = []
+    t = 0.5
+    for p, hand in ((60, "R"), (48, "L"), (64, "R")):
+        for _ in range(3):
+            notes.append((p, t, t + 0.3, hand))
+            t += 0.3
+        t += 0.6
+    path = tmp_path / "seam1080.avi"
+    render_video(path, notes, w=1920, h=1080, kb_h=180, speed=360.0, seam_px=6)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    got = sorted((n["pitch"], round(n["start"], 1)) for n in res["notes"])
+    assert got == sorted((p, round(a - 0.5, 1)) for p, a, b, h in notes)
