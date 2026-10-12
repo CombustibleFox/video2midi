@@ -23,7 +23,7 @@ def layout(first_midi, n_white, width):
 
 
 def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, kb_h=120,
-                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240, left_white=False, right_key=None, effects=False):
+                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240, left_white=False, right_key=None, effects=False, key_hold_s=0.0):
     """notes: list of (pitch, on, off, 'R'|'L'). Notes start after intro_s."""
     keys = layout(first_midi, n_white, w)
     L_BAR = (255, 255, 255) if left_white else LEFT_BGR  # white left hand like some real videos
@@ -36,7 +36,7 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
     for i, (p, a, b, hand) in enumerate(notes):  # key light drops out where the same key is struck again at once
         touch_prev = any(q == p and abs(b2 - a) < 1e-6 for q, a2, b2, _ in notes)
         touch_next = any(q == p and abs(a2 - b) < 1e-6 for q, a2, b2, _ in notes)
-        lit_window[i] = (a + (key_dark_s if touch_prev else 0.0), b - (key_dark_s if touch_next else 0.0))
+        lit_window[i] = (a + (key_dark_s if touch_prev else 0.0), b - (key_dark_s if touch_next else 0.0) + key_hold_s)
     vw = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), fps, (w, h))
     assert vw.isOpened()
     ww = w / n_white

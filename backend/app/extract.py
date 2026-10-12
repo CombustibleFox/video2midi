@@ -23,6 +23,12 @@ MIN_SEAM_ROWS_PER_PX = 0.0019  # a real seam is a band of dark rows about this f
 MAX_BRIDGE_FRAMES = 4  # key-off dropouts up to this long between touching notes are animation, not silence
 MAX_SEAM_GAP = 25  # px; wider gaps are real rests that the key signal already shows
 MIN_SEAM_VOTES = 3  # frames that must agree on a seam
+MIN_OVERSHOOT_FRAMES = 4  # a key staying lit this much longer than its bar is glow, not sound
+OVERSHOOT_FRACTION = 0.25
+BAR_EXTENT_VAL = 100  # brightness that separates a bar from the dark background
+BAR_TOP_CLEAR_ROWS = 14
+MIN_BAR_ROWS = 8
+HOLE_ROWS = 4  # mask holes up to this tall inside a bar are closed
 SEAM_VOTE_FRACTION = 0.4  # ...and at least this share of what a typical, well-seen seam collects
 SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys: glow and flares live there
 
@@ -46,6 +52,9 @@ class Labels:
     bottoms: np.ndarray  # (frames, keys): lowest bar row above the key, -1 if none
     seams: dict[int, list[tuple[int, int, int]]]  # key index -> (frame, seam center row, seam thickness in rows)
     seam_rows: tuple[int, int]  # absolute pixel rows (y_lo, y_hi) searched above the keyboard
+    tops: np.ndarray | None = None  # (frames, keys): top row of the lowest bar, -1 if unknown or cut off
+    clean_row: int = 0  # bars whose lower edge is above this row are clear of glow and sparks
+    edge_bottoms: np.ndarray | None = None  # (frames, keys): lower edge of the same lit run that `tops` starts
 
 
 def lane_extents(cal: Calibration, boxes: dict, pitches: list[int], black: np.ndarray,
@@ -169,11 +178,14 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
     ga = np.clip(np.round(e0 + 2).astype(int), 0, kb_w - 1)
     gb = np.maximum(np.clip(np.round(e1 - 2).astype(int), 0, kb_w), ga + 1)
 
-    cols = {"wa": wa, "wb": wb, "lw": lw, "le": le, "rs": rs, "re": re, "ga": ga, "gb": gb}
+    core = np.maximum(np.round(0.4 * half).astype(int), 1)  # the middle fifth of each side: bars can be much narrower than keys
+    ca = np.clip(np.round(centers - core).astype(int), 0, kb_w - 1)
+    cbn = np.maximum(np.clip(np.round(centers + core).astype(int), 0, kb_w), ca + 1)
+    cols = {"ca": ca, "cb": cbn, "wa": wa, "wb": wb, "lw": lw, "le": le, "rs": rs, "re": re, "ga": ga, "gb": gb}
     bounds = np.unique(np.concatenate([v for v in cols.values()]))
     # each column edge maps to its position among the sorted distinct edges
     ix = {k: np.searchsorted(bounds, v) for k, v in cols.items()}
-    widths = {"bar": wb - wa, "side": (le - lw) + (re - rs), "lane": gb - ga}
+    widths = {"core": cbn - ca, "bar": wb - wa, "side": (le - lw) + (re - rs), "lane": gb - ga}
     return Plan(pitches, black, hues, tol, bar_hues, bar_tol, np.concatenate(idle), cal.top, cal.bottom, cal.x0, cal.x1, kb_w,
                 np.concatenate(idx_parts), np.array(starts), np.array(area, float), np.concatenate(vmin),
                 kb_y0, ref_band, y_lo, y_hi, cut,
@@ -212,9 +224,9 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
         band = frame[plan.kb_y0 : plan.bottom + 1 : 2, plan.x0 : plan.x1 + 1 : 2]
         # lit keys are a small part of the band; an intro/outro screen differs almost everywhere
         if np.count_nonzero(cv2.absdiff(band, plan.ref_band).max(axis=2) < 60) <= 0.5 * band.shape[0] * band.shape[1]:
-            return lab, bot, seams
+            return lab, bot, seams, (bot.copy(), bot.copy())
     if not plan.hues:
-        return lab, bot, seams
+        return lab, bot, seams, (bot.copy(), bot.copy())
 
     bgr = frame[plan.top : plan.bottom + 1, plan.x0 : plan.x1 + 1].reshape(-1, 3)[plan.flat_idx]
     px = cv2.cvtColor(bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)  # only the key boxes
@@ -254,7 +266,24 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
     is_bar = rowfrac > 0.5
     has = is_bar.any(axis=0)
     bot = np.where(has, plan.y_lo + is_bar.shape[0] - 1 - is_bar[::-1].argmax(axis=0), -1).astype(np.int16)
-
+    # Size of the lowest bar, from where the lit (non-dark) rows above each key start and stop. Bars can have pale
+    # highlights that the hue test misses, so this looks at brightness only.
+    bright = cv2.inRange(reg[:, :, 2], BAR_EXTENT_VAL, 255)
+    cbr = cumulative(bright)
+    lit_rows = (cbr[:, ix["cb"]] - cbr[:, ix["ca"]]) / wd["core"] > 0.6
+    lit_rows = cv2.morphologyEx(lit_rows.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((HOLE_ROWS, 1), np.uint8)).astype(bool)
+    has_l = lit_rows.any(axis=0)
+    bot_l_rel = np.where(has_l, lit_rows.shape[0] - 1 - lit_rows[::-1].argmax(axis=0), 0)
+    rows_idx = np.arange(lit_rows.shape[0])[:, None]
+    gap_above = np.where(~lit_rows & (rows_idx < bot_l_rel[None, :]), rows_idx, -1).max(axis=0)
+    # the top edge counts only when empty background follows it: a label or highlight inside the bar leaves a
+    # gap too, with more bar right above it
+    csum = np.vstack([np.zeros((1, lit_rows.shape[1]), np.int32), lit_rows.cumsum(axis=0)])
+    g = np.maximum(gap_above, 0)
+    kk = np.arange(lit_rows.shape[1])
+    above_lit = csum[g, kk] - csum[np.maximum(g - BAR_TOP_CLEAR_ROWS, 0), kk]
+    top = np.where(has_l & (gap_above >= 0) & (above_lit == 0), plan.y_lo + gap_above + 1, -1).astype(np.int16)
+    edge_bot = np.where(has_l, plan.y_lo + bot_l_rel, -1).astype(np.int16)
     cut = plan.cut
     cb, cw = cb[:cut], cw[:cut]
     side = ((cb[:, ix["le"]] - cb[:, ix["lw"]]) + (cb[:, ix["re"]] - cb[:, ix["rs"]])) / wd["side"]
@@ -280,7 +309,7 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
     lo_rows = lo_rows | dark_line
     hi_rows = hi_rows & ~dark_line
     seams = _seams_in_frame(hi_rows, lo_rows, idx, plan.y_lo, plan.min_seam_rows)
-    return lab, bot, seams
+    return lab, bot, seams, (top, edge_bot)
 
 
 def _open_at(video_path: str, frame: int) -> cv2.VideoCapture:
@@ -303,9 +332,9 @@ def _analyse_range(video_path: str, plan: Plan, a: int, b: int, on_frame=None):
         ok, frame = cap.read()
         if not ok:
             break
-        lab, bot, sm = analyse_frame(plan, frame, idx)
+        lab, bot, sm, top = analyse_frame(plan, frame, idx)
         labs.append(lab)
-        bots.append(bot)
+        bots.append(np.stack([bot, top[0], top[1]]))
         seams.extend(sm)
         if on_frame:
             on_frame(idx)
@@ -392,7 +421,9 @@ def label_frames(video_path: str, cal: Calibration, s: Settings, ref: np.ndarray
     if not rows_lab:
         empty = np.zeros((0, K), np.uint8)
         return Labels(empty, plan.pitches, fps, first, empty.astype(np.int16), {}, (plan.y_lo, plan.y_hi))
-    return Labels(np.stack(rows_lab), plan.pitches, fps, first, np.stack(rows_bot), seams, (plan.y_lo, plan.y_hi))
+    bt = np.stack(rows_bot)
+    return Labels(np.stack(rows_lab), plan.pitches, fps, first, bt[:, 0], seams, (plan.y_lo, plan.y_hi), bt[:, 1],
+                  plan.y_lo + plan.cut, bt[:, 2])
 
 
 def _runs(seq: np.ndarray) -> list[list[int]]:
@@ -460,6 +491,35 @@ def seam_splits(L: Labels, fall: tuple[float, float]) -> dict[int, list[tuple[fl
     return out
 
 
+def bar_length_frames(L: Labels, k: int, start: int, fall: tuple[float, float]) -> float | None:
+    """How long the bar for the note that lights key k at frame `start` lasts, from its size as it falls through
+    the clear part of the screen (before the glow at the keys). None when it can't be measured."""
+    if L.tops is None or L.edge_bottoms is None:
+        return None
+    spf, yref = fall
+    y_lo = L.seam_rows[0]
+    sizes = []
+    for f in range(max(0, start - 60), start):
+        y, t = int(L.edge_bottoms[f, k]), int(L.tops[f, k])
+        if t < 0 or y < 0 or L.labels[f, k]:
+            continue
+        # the bar for this note, not an earlier one still on its way out
+        if abs(y - (yref - spf * (start - f))) > 1.5 * spf + 2:
+            continue
+        if y <= L.clean_row - 3 and t >= y_lo + 3 and y - t + 1 >= MIN_BAR_ROWS:  # whole bar visible, clear of glow
+            sizes.append(y - t + 1)
+    if len(sizes) < 3:
+        return None
+    # A real bar keeps its size for as long as it is seen; rim highlights and dark marbling give one-off wrong
+    # sizes. Take the size most frames agree on.
+    sizes.sort()
+    best = max(range(len(sizes)), key=lambda i: sum(1 for x in sizes if 0 <= x - sizes[i] <= 4))
+    agree = [x for x in sizes if 0 <= x - sizes[best] <= 4]
+    if len(agree) < 3:
+        return None
+    return float(np.median(agree)) / spf
+
+
 def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, float, float, int]]:
     """Debounce each key's on/off signal. Returns (pitch, start_s, end_s, color_index)."""
     labels, pitches, fps, first_frame = L.labels, L.pitches, L.fps, L.first
@@ -520,6 +580,12 @@ def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, fl
                     starts.append(e)
             ends.append(float(b))
             for st, en in zip(starts, ends):
+                # Sparks and glow keep a key lit after its bar has ended: trust the bar's length when it is
+                # clearly shorter than the lit key.
+                if fall:
+                    length = bar_length_frames(L, k, int(round(st)), fall)
+                    if length and en - st - length >= max(MIN_OVERSHOOT_FRAMES, OVERSHOOT_FRACTION * length):
+                        en = st + max(length, min_frames)
                 if en - st >= min_frames:
                     out.append((pitch, (first_frame + st) / fps, (first_frame + en) / fps, val - 1))
     return out

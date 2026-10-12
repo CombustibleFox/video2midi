@@ -67,7 +67,7 @@ Limits: the exact bar where a change happens can't always be told from the notes
 
 Detection works best on 720p or 1080p downloads. At 360p the keys are only a few pixels wide and the seam between two back-to-back notes of the same pitch can shrink to one pixel, so some repeated black-key notes get merged. Everything else (pitches, hands, timing) still works at 360p.
 
-Videos with glow, particle fountains and glossy semi-transparent bars work: notes are read from the lit keys, not the bars, and bar seams are only trusted when they are seen on many frames, so sparks and bloom near the keys don't split long notes. A second hand that plays very little is still found.
+Videos with glow, particle fountains and glossy semi-transparent bars work: notes are read from the lit keys, not the bars, and bar seams are only trusted when they are seen on many frames, so sparks and bloom near the keys don't split long notes. A second hand that plays very little is still found. Where sparks and glow keep a key lit after its bar has ended, the note ends where the bar's length says it does (only when the bar can be measured cleanly while it falls, and only to shorten).
 
 ## Sharing a problem spot
 

@@ -319,3 +319,22 @@ def test_glow_particles_and_a_rarely_used_hand(tmp_path):
     t0 = min(a for _, a, _, _ in notes)
     got = sorted((n["pitch"], n["hand"], round(n["start"], 1)) for n in res["notes"])
     assert got == sorted((p, h, round(a - t0, 1)) for p, a, b, h in notes)
+
+
+def test_key_glow_lingering_after_the_bar_does_not_lengthen_notes(tmp_path):
+    """Sparks and glow keep a key lit for a while after its bar has ended; the bar's own length rules."""
+    notes, t = [], 0.5
+    for p in (60, 64, 67, 72, 62, 65):
+        notes.append((p, t, t + 0.3, "R"))
+        t += 0.7
+    for p in (48, 52):
+        notes.append((p, t, t + 0.3, "L"))
+        t += 0.7
+    path = tmp_path / "hold.avi"
+    render_video(path, notes, speed=300.0, seam_px=0, key_hold_s=0.25, effects=True, fps=30)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    durs = [n["end"] - n["start"] for n in res["notes"]]
+    assert len(durs) == len(notes)
+    assert max(durs) < 0.42, durs  # without the bar length these would be 0.55
