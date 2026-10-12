@@ -25,7 +25,8 @@ class Calibration:
     bottom: int = 0
     n_white: int = 52
     first_midi: int = 21  # MIDI pitch of the leftmost (white) key
-    hues: list[float] | None = None  # note colors as hue in degrees (0-360)
+    hues: list[float] | None = None  # note colors as hue in degrees (0-360); -1 = white bars
+    key_hues: list[float] | None = None  # the color each class lights its key in (defaults to hues)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -121,10 +122,13 @@ def key_sample_boxes(cal: Calibration) -> dict[int, tuple[int, int, int, int, bo
 
 def detect_keyboard(med: np.ndarray) -> dict:
     minc = med.min(axis=2)
-    # "bright" is relative to this video: some keyboards are a dim gray, not white. The brightest 1% of
-    # the lower half is the white keys; the keyboard is whatever is at least ~70% as bright as that.
-    white = float(np.percentile(minc[minc.shape[0] // 2 :], 99))
-    bright = minc > max(90.0, min(170.0, 0.7 * white))
+    # "bright" is relative to this video: some keyboards are a dim gray, not white. The typical value of
+    # the non-dark pixels in the lower half is the white keys (a glow line above the keys is a small
+    # minority, so it cannot skew this the way a high percentile would).
+    lower_half = minc[minc.shape[0] // 2 :]
+    lit = lower_half[lower_half > 60]
+    level = float(np.median(lit)) if lit.size > 0.01 * lower_half.size else 240.0
+    bright = minc > max(90.0, min(170.0, 0.7 * level))
     rowfrac = bright.mean(axis=1)
     mx = rowfrac.max()
     if mx < 0.3:
@@ -135,7 +139,9 @@ def detect_keyboard(med: np.ndarray) -> dict:
     if h < 15:
         raise CalibrationError("keyboard region too small")
 
-    band = np.flatnonzero(rowfrac[top : bottom + 1] >= 0.85 * mx) + top
+    # rows holding only white keys: the lower part of the keyboard (the top may carry a bright glow line)
+    low = top + int(0.55 * h)
+    band = np.flatnonzero(rowfrac[low : bottom + 1] >= 0.85 * rowfrac[low : bottom + 1].max()) + low
     colfrac = bright[band].mean(axis=0)
     cols = np.flatnonzero(colfrac > 0.5)
     x0, x1 = int(cols[0]), int(cols[-1])
@@ -205,14 +211,18 @@ def detect_hues(frames: list[np.ndarray], cal: Calibration, hit_offset: int = 4)
     """
     y1 = max(1, cal.top - max(hit_offset, int(0.05 * cal.height)))
     y0 = max(0, y1 - 200)
-    hues = []
+    hues, vals = [], []
+    n_white_px = 0
     for f in frames:
         hsv = cv2.cvtColor(f[y0:y1, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV).reshape(-1, 3)
+        n_white_px += int(np.count_nonzero((hsv[:, 1] < 50) & (hsv[:, 2] >= 215)))
         sel = hsv[(hsv[:, 1] >= 90) & (hsv[:, 2] >= 80)]
         if len(sel) > 3000:
             sel = sel[:: len(sel) // 3000]
         hues.append(sel[:, 0].astype(np.float32) * 2.0)
+        vals.append(sel[:, 2])
     h = np.concatenate(hues) if hues else np.empty(0, np.float32)
+    v_all = np.concatenate(vals) if vals else np.empty(0, np.uint8)
     if len(h) < 200:
         raise CalibrationError("no colored falling notes found above the keyboard")
 
@@ -235,9 +245,59 @@ def detect_hues(frames: list[np.ndarray], cal: Calibration, hit_offset: int = 4)
     p2 = int(np.argmax(others))
     second_share = float(np.sum(hist[circ(np.arange(360), p2) <= 15]) / max(1.0, hist.sum()))
     first = round(refine(p1), 1)
-    if others[p2] == 0 or second_share < 0.05:
-        return [first]
-    return [first, round(refine(p2), 1)]
+    found = [first]
+    if others[p2] > 0 and second_share >= 0.05:
+        found.append(round(refine(p2), 1))
+    # glow around a bar is the same hue family but dimmer than the bar itself: drop a "color" that never gets bright
+    if len(found) == 2:
+        vmed = []
+        for hue in found:
+            sel = v_all[circ(h, hue) <= 15]
+            vmed.append(float(np.percentile(sel, 90)) if sel.size else 0.0)
+        if circ(found[0], found[1]) < 60 and min(vmed) < 0.8 * max(vmed):  # glow stays near the bar's hue
+            found = [found[int(np.argmax(vmed))]]
+    # white bars: plenty of near-white pixels beside a single colored hand
+    if len(found) == 1 and n_white_px >= 0.3 * len(h) and n_white_px >= 2000:
+        found.append(-1.0)
+    return found
+
+
+def detect_key_hues(frames: list[np.ndarray], cal: Calibration, bar_hues: list[float]) -> list[float]:
+    """The color each hand lights its keys in, which can differ from the bar color (orange bars, red keys)."""
+    boxes = key_sample_boxes(cal)
+    y1 = cal.top - 8
+    y0 = max(0, y1 - 22)
+    out = []
+    for bh in bar_hues:
+        if bh < 0:
+            out.append(-1.0)
+            continue
+        samples = []
+        for f in frames:
+            hsv_above = cv2.cvtColor(f[y0:y1, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV)
+            hsv_kb = None
+            for pitch, (xa, xb, ya, yb, black) in boxes.items():
+                if black:
+                    continue
+                xc = int((xa + xb) / 2) - cal.x0
+                col = hsv_above[:, max(0, xc - 2) : xc + 3].reshape(-1, 3)
+                d = np.abs(col[:, 0].astype(float) * 2 - bh)
+                d = np.minimum(d, 360 - d)
+                if np.count_nonzero((d <= 15) & (col[:, 1] >= 90) & (col[:, 2] >= 200)) < 0.5 * len(col):
+                    continue
+                if hsv_kb is None:
+                    hsv_kb = cv2.cvtColor(f[cal.top : cal.bottom + 1, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV)
+                box = hsv_kb[ya - cal.top : yb - cal.top + 1, xa - cal.x0 : xb - cal.x0 + 1].reshape(-1, 3)
+                sel = box[(box[:, 1] >= 100) & (box[:, 2] >= 110)]
+                if len(sel) >= 0.3 * len(box):
+                    samples.append(sel[:, 0].astype(np.float32) * 2.0)
+        if samples:
+            hh = np.concatenate(samples)
+            ang = np.deg2rad(hh)
+            out.append(round(float(np.rad2deg(np.arctan2(np.sin(ang).mean(), np.cos(ang).mean())) % 360), 1))
+        else:
+            out.append(bh)
+    return out
 
 
 def calibrate(video_path: str, n_samples: int = 40, hit_offset: int = 4):
@@ -247,6 +307,7 @@ def calibrate(video_path: str, n_samples: int = 40, hit_offset: int = 4):
     kb = detect_keyboard(med)
     cal = Calibration(**info, **kb)
     cal.hues = detect_hues(frames, cal, hit_offset)
+    cal.key_hues = detect_key_hues(frames, cal, cal.hues)
     return cal, med, frames
 
 
@@ -261,7 +322,7 @@ def render_preview(frame: np.ndarray, cal: Calibration, hit_offset: int = 4) -> 
             cv2.putText(img, f"C{pitch // 12 - 1}", (int(xc) - 8, max(12, hy - 18)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
     for i, hue in enumerate(cal.hues or []):
-        bgr = cv2.cvtColor(np.uint8([[[hue / 2, 255, 255]]]), cv2.COLOR_HSV2BGR)[0, 0].tolist()
+        bgr = (255, 255, 255) if hue < 0 else cv2.cvtColor(np.uint8([[[hue / 2, 255, 255]]]), cv2.COLOR_HSV2BGR)[0, 0].tolist()
         cv2.rectangle(img, (10 + i * 40, 10), (40 + i * 40, 40), bgr, -1)
         cv2.rectangle(img, (10 + i * 40, 10), (40 + i * 40, 40), (255, 255, 255), 1)
     return img

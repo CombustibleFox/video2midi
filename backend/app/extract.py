@@ -10,6 +10,9 @@ from .notes import Note
 from .settings import Settings
 
 KEY_SAT_MIN = 80
+WHITE_SAT_MAX = 60  # white-note class: keys lit white are barely saturated
+WHITE_LIFT = 35  # ...and brighter than the same key idle
+WHITE_BAR_VAL_MIN = 200
 KEY_VAL_WHITE = 100
 KEY_VAL_BLACK = 110  # lit black keys can be dim (~140-155 on dark blue); idle ones sit below ~100
 ON_FRACTION = 0.6
@@ -25,6 +28,7 @@ SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys
 
 def _hue_tolerance(hues: list[float]) -> float:
     """Half the hue spacing (OpenCV units, 0-180), capped at 12."""
+    hues = [h for h in hues if h >= 0]  # white (-1) has no hue
     if len(hues) < 2:
         return 12.0
     d = abs(hues[0] - hues[1])
@@ -85,8 +89,11 @@ class Plan:
     """Everything the per-frame analysis needs, precomputed once. Picklable, so workers can share it."""
     pitches: list[int]
     black: np.ndarray
-    hues: list[float]
+    hues: list[float]  # key-light hues, OpenCV units; -1 = white
     tol: float
+    bar_hues: list[float]  # falling-bar hues (can differ from the key lights); -1 = white
+    bar_tol: float
+    ref_v: np.ndarray  # per pixel: brightness of the idle keyboard
     top: int
     bottom: int
     x0: int
@@ -118,10 +125,15 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
     pitches = sorted(boxes)
     black = np.array([boxes[p][4] for p in pitches])
     kb_w, kb_h = cal.x1 - cal.x0 + 1, cal.bottom - cal.top + 1
-    hues = [h / 2 for h in (cal.hues or [])]
-    tol = _hue_tolerance(cal.hues or [])
+    bar_deg = list(cal.hues or [])
+    key_deg = list(cal.key_hues) if cal.key_hues and len(cal.key_hues) == len(bar_deg) else bar_deg
+    hues = [h / 2 if h >= 0 else -1.0 for h in key_deg]
+    bar_hues = [h / 2 if h >= 0 else -1.0 for h in bar_deg]
+    tol = _hue_tolerance(key_deg)
+    bar_tol = _hue_tolerance(bar_deg)
+    ref_hsv = cv2.cvtColor(ref[cal.top : cal.bottom + 1, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV) if ref is not None else None
 
-    idx_parts, starts, area, vmin = [], [], [], []
+    idx_parts, starts, area, vmin, idle = [], [], [], [], []
     pos = 0
     for p in pitches:
         xa, xb, ya, yb, blk = boxes[p]
@@ -132,6 +144,7 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
         n = (xb - xa) * (yb - ya)
         area.append(n)
         vmin.append(np.full(n, KEY_VAL_BLACK if blk else KEY_VAL_WHITE, np.int16))
+        idle.append(ref_hsv[ya:yb, xa:xb, 2].ravel().astype(np.int16) if ref_hsv is not None else np.full(n, 150, np.int16))
         pos += n
 
     kb_y0 = cal.top + int(0.75 * (cal.bottom - cal.top))
@@ -160,11 +173,11 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
     # each column edge maps to its position among the sorted distinct edges
     ix = {k: np.searchsorted(bounds, v) for k, v in cols.items()}
     widths = {"bar": wb - wa, "side": (le - lw) + (re - rs), "lane": gb - ga}
-    return Plan(pitches, black, hues, tol, cal.top, cal.bottom, cal.x0, cal.x1, kb_w,
+    return Plan(pitches, black, hues, tol, bar_hues, bar_tol, np.concatenate(idle), cal.top, cal.bottom, cal.x0, cal.x1, kb_w,
                 np.concatenate(idx_parts), np.array(starts), np.array(area, float), np.concatenate(vmin),
                 kb_y0, ref_band, y_lo, y_hi, cut,
                 max(1, int(round(MIN_SEAM_ROWS_PER_PX * cal.height))), bounds, ix, widths, ga, gb,
-                [_hue_intervals(h, tol) for h in hues])
+                [[] if h < 0 else _hue_intervals(h, bar_tol) for h in bar_hues])
 
 
 def _seams_in_frame(hi_rows: np.ndarray, lo_rows: np.ndarray, idx: int, y_lo: int, min_rows: int = 1) -> list[tuple[int, tuple[int, int, int]]]:
@@ -205,18 +218,25 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
     bgr = frame[plan.top : plan.bottom + 1, plan.x0 : plan.x1 + 1].reshape(-1, 3)[plan.flat_idx]
     px = cv2.cvtColor(bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)  # only the key boxes
     Hp = px[:, 0].astype(np.int16)
-    bright = (px[:, 1] >= KEY_SAT_MIN) & (px[:, 2] >= plan.val_min)
     fracs = []
     for hc in plan.hues:
-        d = np.abs(Hp - hc)
-        near = np.minimum(d, 180 - d) <= plan.tol
+        if hc < 0:  # white lights the key up relative to how it looks idle
+            near = (px[:, 1] < WHITE_SAT_MAX) & (px[:, 2] > plan.ref_v + WHITE_LIFT)
+            bright = np.ones_like(near)
+        else:
+            d = np.abs(Hp - hc)
+            near = np.minimum(d, 180 - d) <= plan.tol
+            bright = (px[:, 1] >= KEY_SAT_MIN) & (px[:, 2] >= plan.val_min)
         fracs.append(np.add.reduceat((bright & near).astype(np.int32), plan.starts) / plan.area)
     fr = np.stack(fracs)
     lab = np.where(fr.max(axis=0) > ON_FRACTION, fr.argmax(axis=0) + 1, 0).astype(np.uint8)
 
     reg = cv2.cvtColor(frame[plan.y_lo : plan.y_hi, plan.x0 : plan.x1 + 1], cv2.COLOR_BGR2HSV)
     bar = None
-    for intervals in plan.bar_ranges:
+    for hb, intervals in zip(plan.bar_hues, plan.bar_ranges):
+        if hb < 0:
+            m = cv2.inRange(reg, (0, 0, WHITE_BAR_VAL_MIN), (179, WHITE_SAT_MAX, 255))
+            bar = m if bar is None else cv2.bitwise_or(bar, m)
         for lo, hi in intervals:
             m = cv2.inRange(reg, (lo, BAR_SAT_MIN, BAR_VAL_MIN), (hi, 255, 255))
             bar = m if bar is None else cv2.bitwise_or(bar, m)

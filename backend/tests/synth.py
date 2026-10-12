@@ -23,9 +23,12 @@ def layout(first_midi, n_white, width):
 
 
 def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, kb_h=120,
-                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240):
+                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240, left_white=False, right_key=None):
     """notes: list of (pitch, on, off, 'R'|'L'). Notes start after intro_s."""
     keys = layout(first_midi, n_white, w)
+    L_BAR = (255, 255, 255) if left_white else LEFT_BGR  # white left hand like some real videos
+    R_BAR = RIGHT_BGR
+    R_KEY = right_key or RIGHT_BGR  # bars and lit keys may differ in color
     lit_window = {}
     kb_y = h - kb_h
     notes = [(p, a + intro_s, b + intro_s, hand) for p, a, b, hand in notes]
@@ -51,7 +54,7 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
             xc, kw, black = keys[p]
             la, lb = lit_window[i]
             if not black and la <= t < lb - key_gap_s:
-                col = RIGHT_BGR if hand == "R" else LEFT_BGR
+                col = R_KEY if hand == "R" else L_BAR
                 img[kb_y + 2 : h - 2, int(xc - kw / 2) : int(xc + kw / 2)] = col
         for p, (xc, kw, black) in keys.items():
             if black:  # idle black keys have a faint blue sheen like real videos
@@ -59,7 +62,8 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
         for i, (p, a, b, hand) in enumerate(notes):
             xc, kw, black = keys[p]
             la, lb = lit_window[i]
-            col = RIGHT_BGR if hand == "R" else LEFT_BGR
+            col = R_BAR if hand == "R" else L_BAR
+            keycol = R_KEY if hand == "R" else L_BAR
             if black and dim_black:  # lit black keys can be dim in real videos (V ~ 130-150)
                 col = tuple(int(c * 0.62) for c in col)
             x0, x1 = int(xc - kw / 2), int(xc + kw / 2)
@@ -77,7 +81,7 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
                         img[cy - 10 : cy - 10 + outline_rows, x0:x1] = tuple(int(c * 0.3) for c in col)
                     img[cy - 5 : cy + 5, lx0:lx1] = (165, 165, 165)  # light gray like the real labels
             if black and la <= t < lb - key_gap_s:
-                img[kb_y : kb_y + int(0.6 * kb_h), x0:x1] = col
+                img[kb_y : kb_y + int(0.6 * kb_h), x0:x1] = keycol
         if glow:  # sparks and glow where the notes land, like real videos
             rng = np.random.default_rng(f)
             for _ in range(60):

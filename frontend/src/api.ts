@@ -36,6 +36,7 @@ export interface Calibration {
   n_white: number;
   first_midi: number;
   hues: number[] | null;
+  key_hues?: number[] | null;
 }
 
 export interface JobState {

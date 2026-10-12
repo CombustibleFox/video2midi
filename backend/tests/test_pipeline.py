@@ -285,3 +285,16 @@ def test_dim_gray_keyboard_is_found(tmp_path):
     s = Settings(quantize="off")
     res = run_extraction(path, tmp_path, run_calibration(path, tmp_path, s), s)
     assert sorted(n["pitch"] for n in res["notes"]) == sorted(p for p, *_ in notes)
+
+
+def test_white_hand_and_differently_colored_keys(tmp_path):
+    """One hand is white bars (keys light up white), the other orange bars whose keys light red; keyboard is dim gray."""
+    notes = [(48, 0.5, 1.2, "L"), (52, 0.5, 1.2, "L"), (61, 1.5, 2.2, "L"), (67, 0.5, 1.2, "R"), (72, 1.5, 2.2, "R"), (66, 2.5, 3.2, "R"), (45, 2.5, 3.2, "L")]
+    path = tmp_path / "white.avi"
+    render_video(path, notes, speed=240.0, white_level=150, left_white=True, right_key=(40, 40, 230))
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    assert -1 in cal.hues and len(cal.hues) == 2
+    res = run_extraction(path, tmp_path, cal, s)
+    got = sorted((n["pitch"], n["hand"]) for n in res["notes"])
+    assert got == sorted((p, h) for p, _, _, h in notes)

@@ -64,7 +64,7 @@ export default function CalibrationView({ jobId, initialSettings, onConfirm, onB
         <li><b>{noteName(cal.first_midi)}</b> to <b>{noteName(lastMidi(cal.first_midi, cal.n_white))}</b></li>
         <li>
           {hues.length > 1 ? "2 note colors" : "1 note color"}{" "}
-          {hues.map((h, i) => <i key={i} className="hue" style={{ background: `hsl(${h} 75% 55%)` }} title={`hue ${Math.round(h)}°`} />)}
+          {hues.map((h, i) => <i key={i} className="hue" style={{ background: h < 0 ? "#f4f4f4" : `hsl(${h} 75% 55%)` }} title={h < 0 ? "white notes" : `hue ${Math.round(h)}°`} />)}
         </li>
         <li>{cal.width}×{cal.height}</li>
       </ul>
@@ -96,13 +96,13 @@ export default function CalibrationView({ jobId, initialSettings, onConfirm, onB
             <label>Leftmost key (MIDI number, now {noteName(cal.first_midi)}){int("first_midi")}</label>
             {hues.map((h, i) => (
               <label key={i}>
-                Note color {i + 1} (hue, degrees)
-                <input type="number" min={0} max={360} value={h} onChange={(e) => set({ hues: hues.map((x, j) => (j === i ? Number(e.target.value) : x)) })} />
+                Note color {i + 1} {h < 0 ? "(white)" : "(hue, degrees)"}
+                {h >= 0 && <input type="number" min={0} max={360} value={h} onChange={(e) => set({ hues: hues.map((x, j) => (j === i ? Number(e.target.value) : x)), key_hues: null })} />}
               </label>
             ))}
           </div>
           <div className="row">
-            {hues.length === 2 && <button type="button" onClick={() => set({ hues: [hues[0]] })}>Treat as one color (split hands by pitch)</button>}
+            {hues.length === 2 && <button type="button" onClick={() => set({ hues: [hues[0]], key_hues: cal.key_hues ? [cal.key_hues[0]] : null })}>Treat as one color (split hands by pitch)</button>}
             {changed && <button type="button" onClick={() => setCal(detected)}>Reset to what was detected</button>}
           </div>
         </section>
