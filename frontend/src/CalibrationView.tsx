@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Calibration, getCalibration, previewCalibration, Settings } from "./api";
+import ClipDownload from "./ClipDownload";
 import SettingsPanel from "./SettingsPanel";
 import { noteName } from "./notes";
 
@@ -80,6 +81,7 @@ export default function CalibrationView({ jobId, initialSettings, onConfirm }: P
         <summary>Settings</summary>
         <SettingsPanel value={settings} onChange={setSettings} />
       </details>
+      <ClipDownload jobId={jobId} />
       {error && <p className="error">{error}</p>}
       <button className="primary" onClick={() => onConfirm(cal, settings)}>Convert to MIDI</button>
     </div>

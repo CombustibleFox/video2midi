@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getResult, Result } from "./api";
+import ClipDownload from "./ClipDownload";
 import PianoRoll from "./PianoRoll";
 import { Player } from "./player";
 
@@ -84,6 +85,7 @@ export default function ResultView({ jobId, onAdjust, onReset }: Props) {
       ) : (
         <p className="error">No notes were detected. Go back and check the keyboard area and colors.</p>
       )}
+      <ClipDownload jobId={jobId} offset={res.video_offset} playhead={time} suggestedStart={Math.max(0, Math.round((res.video_offset - 1) * 10) / 10)} />
       <div className="row">
         <button onClick={onAdjust}>Adjust detection / settings</button>
         <button onClick={onReset}>Start over</button>

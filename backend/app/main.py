@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .calibrate import Calibration
+from .clip import MAX_CLIP_S, cut_clip, grab_frame, video_duration
 from .jobs import JobManager
 from .pipeline import write_preview
 from .settings import Settings
@@ -141,6 +142,42 @@ async def process(jid: str, request: Request):
     settings = _settings({**job.settings.__dict__, **(body.get("settings") or {})})
     manager.process(job, cal, settings)
     return job.snapshot()
+
+
+@app.get("/jobs/{jid}/clip")
+def clip(jid: str, start: float = 0.0, duration: float = 25.0):
+    """A short clip of the original video (no audio), handy for sharing a problem spot."""
+    job = _job(jid)
+    if not job.video or not job.video.exists():
+        raise HTTPException(409, "video not ready")
+    if start < 0 or not 1 <= duration <= MAX_CLIP_S:
+        raise HTTPException(422, f"start must be >= 0 and duration between 1 and {int(MAX_CLIP_S)} seconds")
+    if start >= video_duration(job.video):
+        raise HTTPException(422, "start is past the end of the video")
+    out = job.dir / f"clip_{start:.2f}_{duration:.2f}.mp4"
+    if not out.exists():
+        try:
+            cut_clip(job.video, start, duration, out)
+        except RuntimeError as e:
+            raise HTTPException(500, str(e))
+    return FileResponse(out, media_type="video/mp4", filename=f"clip_{int(start)}s.mp4")
+
+
+@app.get("/jobs/{jid}/frame")
+def frame(jid: str, t: float = 0.0):
+    """One full-resolution frame of the original video as a PNG."""
+    job = _job(jid)
+    if not job.video or not job.video.exists():
+        raise HTTPException(409, "video not ready")
+    if t < 0:
+        raise HTTPException(422, "t must be >= 0")
+    out = job.dir / f"frame_{t:.2f}.png"
+    if not out.exists():
+        try:
+            grab_frame(job.video, t, out)
+        except RuntimeError as e:
+            raise HTTPException(422, str(e))
+    return FileResponse(out, media_type="image/png", filename=f"frame_{t:.1f}s.png")
 
 
 @app.get("/jobs/{jid}/notes")

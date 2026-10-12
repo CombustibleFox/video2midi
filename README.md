@@ -60,3 +60,7 @@ Frame analysis runs in parallel: the video is cut into chunks and a pool of work
 ## Video quality
 
 Detection works best on 720p or 1080p downloads. At 360p the keys are only a few pixels wide and the seam between two back-to-back notes of the same pitch can shrink to one pixel, so some repeated black-key notes get merged. Everything else (pitches, hands, timing) still works at 360p.
+
+## Sharing a problem spot
+
+On the detection step and on the result page there is a **Save a clip or frame of the original video** box. Enter a video time (or, on the result page, move the piano-roll playhead and press **Use playhead**) and download a clip of up to 60 seconds (`.mp4`, no audio) or a full-resolution frame (`.png`). Clips use ffmpeg when it is installed and fall back to OpenCV otherwise. The piano roll starts at the first note, so the result page shows the offset to convert piano-roll time to video time.

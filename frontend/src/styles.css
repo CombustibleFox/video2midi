@@ -28,3 +28,7 @@ button.primary { background: var(--accent); color: #fff; font-weight: 600; }
 .roll { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: #232833; }
 .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #ffd166; pointer-events: none; }
 summary { cursor: pointer; color: var(--muted); }
+
+.clipbox { border: 1px dashed var(--line); border-radius: 6px; padding: 10px 12px; }
+.clipbox summary { color: var(--muted); }
+.clipbox .row { margin-top: 8px; }

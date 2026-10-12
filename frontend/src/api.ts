@@ -56,6 +56,7 @@ export interface NoteOut {
 
 export interface Result {
   bpm: number;
+  video_offset: number; // video time of the first note: video time = piano-roll time + this
   notes: NoteOut[];
 }
 
@@ -123,3 +124,20 @@ export async function getResult(id: string): Promise<Result> {
 export async function deleteJob(id: string) {
   await fetch(`/jobs/${id}`, { method: "DELETE" }).catch(() => undefined);
 }
+
+/** Download a file from the server and hand it to the browser as a save-as. */
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  const r = await check(await fetch(url));
+  const blob = await r.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+export const clipUrl = (id: string, start: number, duration: number) =>
+  `/jobs/${id}/clip?start=${start}&duration=${duration}`;
+export const frameUrl = (id: string, t: number) => `/jobs/${id}/frame?t=${t}`;
