@@ -39,6 +39,8 @@ export interface Calibration {
   first_midi: number;
   hues: number[] | null;
   key_hues?: number[] | null;
+  white_edges?: number[] | null; // measured x of the lines between white keys (dropped by the server when the extent is edited)
+  black_centers?: (number | null)[] | null;
 }
 
 export interface JobState {

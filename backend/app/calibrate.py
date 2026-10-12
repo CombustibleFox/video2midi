@@ -6,6 +6,8 @@ import numpy as np
 
 # does a black key follow the white key at this position in the octave (C D E F G A B)?
 BLACK_AFTER = [1, 1, 0, 1, 1, 1, 0]
+EDGE_KEY_LEVEL = 0.4  # outer keys are shaded: how bright (against the usual white key) a stretch must be to still be a key
+EDGE_SNAP_DEPTH = 0.04  # how much darker than its surroundings a key line must be for a line to be snapped to it
 WHITE_SEMIS = [0, 2, 4, 5, 7, 9, 11]
 
 
@@ -28,7 +30,8 @@ class Calibration:
     hues: list[float] | None = None  # note colors as hue in degrees (0-360); -1 = white bars
     key_hues: list[float] | None = None  # the color each class lights its key in (defaults to hues)
     glow_hue: float | None = None  # color of the glow line along the top of the keyboard, hue in degrees, if it has one
-    black_offsets: list[float] | None = None  # pixels each black key sits off the boundary of the white keys around it
+    white_edges: list[float] | None = None  # x of the n_white + 1 lines between the white keys, as measured in the frame
+    black_centers: list[float | None] | None = None  # x center of the black key between white key i and i+1 (None: no black key)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -37,6 +40,15 @@ class Calibration:
     def from_dict(cls, d: dict) -> "Calibration":
         names = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in names})
+
+    def with_overrides(self, overrides: dict) -> "Calibration":
+        """A copy with edited values. Measured key positions only fit the keyboard they were measured on, so they
+        are dropped when the keyboard's extent or key count is edited (the keys are then spaced evenly)."""
+        new = Calibration.from_dict({**self.to_dict(), **(overrides or {})})
+        if (new.x0, new.x1, new.n_white) != (self.x0, self.x1, self.n_white):
+            new.white_edges = None
+            new.black_centers = None
+        return new
 
 
 def read_info(cap: cv2.VideoCapture) -> dict:
@@ -81,20 +93,28 @@ def _longest_run(mask: np.ndarray, max_gap: int = 3) -> tuple[int, int] | None:
     return best
 
 
+def white_edges(cal: Calibration) -> np.ndarray:
+    """x of the lines between the white keys (n_white + 1 values): measured in the frame when known, else even."""
+    if cal.white_edges and len(cal.white_edges) == cal.n_white + 1:
+        return np.asarray(cal.white_edges, float)
+    return cal.x0 + np.arange(cal.n_white + 1) * ((cal.x1 - cal.x0 + 1) / cal.n_white)
+
+
 def key_layout(cal: Calibration) -> dict[int, tuple[float, float]]:
     """pitch -> (center x, half width) of each visible key."""
-    ww = (cal.x1 - cal.x0 + 1) / cal.n_white
+    edges = white_edges(cal)
     # index of the first key within the octave
     first_white = WHITE_SEMIS.index(cal.first_midi % 12) if cal.first_midi % 12 in WHITE_SEMIS else 0
     out: dict[int, tuple[float, float]] = {}
     pitch = cal.first_midi
     for i in range(cal.n_white):
-        out[pitch] = (cal.x0 + (i + 0.5) * ww, ww * 0.5)
+        width = edges[i + 1] - edges[i]
+        out[pitch] = ((edges[i] + edges[i + 1]) / 2, width * 0.5)
         if i == cal.n_white - 1:
             break
         if BLACK_AFTER[(first_white + i) % 7]:
-            shift = cal.black_offsets[i] if cal.black_offsets and i < len(cal.black_offsets) else 0.0
-            out[pitch + 1] = (cal.x0 + (i + 1) * ww + shift, ww * 0.15)
+            c = cal.black_centers[i] if cal.black_centers and i < len(cal.black_centers) else None
+            out[pitch + 1] = (float(c) if c is not None else float(edges[i + 1]), (edges[i + 2] - edges[i]) / 2 * 0.15)
             pitch += 2
         else:
             pitch += 1
@@ -109,18 +129,100 @@ def key_sample_boxes(cal: Calibration) -> dict[int, tuple[int, int, int, int, bo
     videos draw where the notes land.
     """
     h = cal.bottom - cal.top + 1
-    ww = (cal.x1 - cal.x0 + 1) / cal.n_white
     out = {}
     for pitch, (xc, hw) in key_layout(cal).items():
         black = pitch % 12 in (1, 3, 6, 8, 10)
         if black:
+            ww = hw / 0.15  # key_layout gives a black key 0.15 of the white key width on each side
             half, ya, yb = 0.12 * ww, cal.top + 0.20 * h, cal.top + 0.45 * h
         else:
+            ww = 2 * hw
             half, ya, yb = 0.30 * ww, cal.top + 0.80 * h, cal.top + 0.95 * h
         xa = max(0, int(round(xc - half)))
         xb = max(xa + 1, int(round(xc + half)))
         out[pitch] = (xa, xb, int(ya), max(int(ya) + 1, int(yb)), black)
     return out
+
+
+def _white_edges(profile: np.ndarray, x0: int, x1: int, level: float) -> np.ndarray:
+    """x of every line between two white keys, measured one by one.
+
+    Starts from the dark lines between keys inside the bright part of the keyboard (x0..x1), fills in lines that
+    were missed, then keeps going outward as long as there are keys (the outer keys are often shaded and fall
+    outside the bright part), and finally snaps every line to the darkest spot next to where it is expected."""
+    W = len(profile)
+    sep = profile[x0 : x1 + 1] < 0.7 * np.median(profile[x0 : x1 + 1])
+    centers, i = [], 0
+    while i < len(sep):
+        if sep[i]:
+            j = i
+            while j + 1 < len(sep) and sep[j + 1]:
+                j += 1
+            centers.append((i + j) / 2 + x0)
+            i = j + 1
+        else:
+            i += 1
+    if len(centers) < 5:
+        raise CalibrationError("could not find white key separators")
+    ww0 = float(np.median(np.diff(centers)))
+    # drop dark blobs (logos, watermarks) that sit much closer to a separator than a key is wide
+    kept = [centers[0]]
+    for c in centers[1:]:
+        if c - kept[-1] >= 0.6 * ww0:
+            kept.append(c)
+    centers = kept
+    # Separators can be missed (fill the gap evenly), and a stray one can sit in the middle of a gap (add gaps
+    # together until they span a whole number of keys).
+    edges = [centers[0]]
+    prev, acc = centers[0], 0.0
+    for c in centers[1:]:
+        r = (c - prev) / ww0
+        if abs(r - round(r)) <= 0.3 and round(r) >= 1:
+            k = int(round(r))
+            edges += [prev + (c - prev) * t / k for t in range(1, k + 1)]
+            prev = c
+    ww = float(np.median(np.diff(edges)))
+
+    def keyboard_like(a: float, b: float) -> bool:
+        a, b = max(0, int(a)), min(W, int(b))
+        return b - a >= 0.4 * ww and float(profile[a:b].mean()) >= EDGE_KEY_LEVEL * level
+
+    # outward, key by key
+    for direction in (-1, 1):
+        w_loc = ww
+        while True:
+            x = edges[0] if direction < 0 else edges[-1]
+            nx = x + direction * w_loc
+            if (nx < 0 and x < 0.5 * ww) or (nx > W - 1 and W - 1 - x < 0.5 * ww):
+                break
+            nx = min(max(nx, 0.0), W - 1.0)
+            if not keyboard_like(min(x, nx), max(x, nx)):
+                break
+            if direction < 0:
+                edges.insert(0, nx)
+            else:
+                edges.append(nx)
+            if nx <= 0 or nx >= W - 1:
+                break
+    edges = np.array(edges, float)
+
+    # snap each line to the darkest spot close to where it is expected (keys are not all the same width)
+    snapped = edges.copy()
+    smooth = np.convolve(profile, np.ones(3) / 3, mode="same")
+    for i in range(len(edges)):
+        w_here = float(np.mean(np.diff(edges)[max(0, i - 1) : i + 1]))
+        reach = max(1, int(0.22 * w_here))
+        lo, hi = max(0, int(edges[i]) - reach), min(W, int(edges[i]) + reach + 1)
+        if hi - lo < 3 or edges[i] <= 0 or edges[i] >= W - 1:
+            continue
+        window = smooth[lo:hi]
+        k = int(np.argmin(window))
+        neighbourhood = float(np.median(smooth[max(0, lo - reach) : min(W, hi + reach)]))
+        if neighbourhood - window[k] >= EDGE_SNAP_DEPTH * level:
+            snapped[i] = lo + k
+    if np.all(np.diff(snapped) > 0.5 * ww):
+        edges = snapped
+    return edges
 
 
 def detect_keyboard(med: np.ndarray) -> dict:
@@ -149,65 +251,29 @@ def detect_keyboard(med: np.ndarray) -> dict:
     cols = np.flatnonzero(colfrac > 0.5)
     x0, x1 = int(cols[0]), int(cols[-1])
 
-    profile = minc[band][:, x0 : x1 + 1].mean(axis=0)
-    sep = profile < 0.7 * np.median(profile)
-    centers, i = [], 0
-    while i < len(sep):
-        if sep[i]:
-            j = i
-            while j + 1 < len(sep) and sep[j + 1]:
-                j += 1
-            centers.append((i + j) / 2 + x0)
-            i = j + 1
-        else:
-            i += 1
-    if len(centers) < 5:
-        raise CalibrationError("could not find white key separators")
-    ww0 = float(np.median(np.diff(centers)))
-    # drop dark blobs (logos, watermarks) that sit much closer to a separator than a key is wide
-    kept = [centers[0]]
-    for c in centers[1:]:
-        if c - kept[-1] >= 0.6 * ww0:
-            kept.append(c)
-    centers = kept
-    # separators can be missed; count how many key widths each gap spans
-    # (A stray separator in the middle of a gap, e.g. a dark scenery edge between two real ones, makes both halves
-    # non-integer; such gaps are added together until they span a whole number of keys.)
-    intervals, acc = 0, 0.0
-    for d in np.diff(centers):
-        acc += d
-        r = acc / ww0
-        if abs(r - round(r)) <= 0.3:
-            intervals += max(1, int(round(r)))
-            acc = 0.0
-    if acc > 0:
-        intervals += max(1, int(round(acc / ww0)))
-    ww1 = (centers[-1] - centers[0]) / intervals
-    n_white = max(2, int(round((x1 - x0 + 1) / ww1)))
-    ww = (x1 - x0 + 1) / n_white
+    full = minc[band].mean(axis=0).astype(float)  # brightness along the lower part of the keys, whole frame width
+    edges = _white_edges(full, x0, x1, level)
+    n_white = len(edges) - 1
+    x0, x1 = int(round(edges[0])), int(round(edges[-1]))
+    widths = np.diff(edges)
 
-    # black keys: dark at the boundary between two white keys on a row near the key tops
+    # black keys: dark blobs on a row near the key tops, each measured where it really is
     ya = min(bottom, top + max(1, int(0.25 * h)))
-    row = minc[ya]
-    has_black = []
+    row = minc[ya].astype(float)
+    dark_level = min(100.0, 0.45 * level)
+    has_black, black_centers = [], []
     for i in range(1, n_white):
-        bx = x0 + i * ww
-        lo, hi = int(bx - 0.15 * ww), int(bx + 0.15 * ww) + 1
-        has_black.append(float(row[max(lo, 0) : hi].mean()) < 100)
-
-    # real black keys are not centered on the line between two white keys (C#, F# lean left, D#, A# right)
-    black_offsets = []
-    for i in range(1, n_white):
-        off = 0.0
-        if has_black[i - 1]:
-            bx = x0 + i * ww
-            lo, hi = max(int(bx - 0.5 * ww), 0), int(bx + 0.5 * ww) + 1
-            dark = np.flatnonzero(row[lo:hi] < 100) + lo
-            if len(dark):
-                runs = np.split(dark, np.flatnonzero(np.diff(dark) > 2) + 1)
-                run = min(runs, key=lambda r: abs((r[0] + r[-1]) / 2 - bx))
-                off = float(np.clip((run[0] + run[-1]) / 2 - bx, -0.3 * ww, 0.3 * ww))
-        black_offsets.append(round(off, 1))
+        w = 0.5 * (widths[i - 1] + widths[i])
+        lo, hi = max(int(edges[i] - 0.5 * w), 0), min(int(edges[i] + 0.5 * w) + 1, len(row))
+        dark = np.flatnonzero(row[lo:hi] < dark_level) + lo
+        center = None
+        if len(dark):
+            runs = np.split(dark, np.flatnonzero(np.diff(dark) > 2) + 1)
+            run = max(runs, key=len)
+            if len(run) >= 0.25 * w and abs((run[0] + run[-1]) / 2 - edges[i]) <= 0.35 * w:
+                center = round(float((run[0] + run[-1]) / 2), 1)
+        has_black.append(center is not None)
+        black_centers.append(center)
 
     best_s, best_score = 0, -1
     for s in range(7):
@@ -228,7 +294,7 @@ def detect_keyboard(med: np.ndarray) -> dict:
                 best = (abs(center - 64), first)
         first_midi = best[1]
     return dict(x0=x0, x1=x1, top=int(top), bottom=int(bottom), n_white=n_white, first_midi=int(first_midi),
-                black_offsets=black_offsets)
+                white_edges=[round(float(e), 1) for e in edges], black_centers=black_centers)
 
 
 def detect_hues(frames: list[np.ndarray], cal: Calibration, hit_offset: int = 4) -> list[float]:

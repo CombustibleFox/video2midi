@@ -7,15 +7,19 @@ RIGHT_BGR = (80, 200, 60)   # green
 LEFT_BGR = (220, 120, 40)   # blue
 
 
-def layout(first_midi, n_white, width):
-    ww = width / n_white
+def layout(first_midi, n_white, width, edges=None, lean_on=False):
+    """pitch -> (center x, width, is_black). `edges` (n_white + 1 key lines) gives keys of different widths."""
+    if edges is None:
+        edges = np.arange(n_white + 1) * (width / n_white)
     keys, pitch = {}, first_midi
     for i in range(n_white):
-        keys[pitch] = ((i + 0.5) * ww, ww - 3, False)
+        ww = edges[i + 1] - edges[i]
+        keys[pitch] = ((edges[i] + edges[i + 1]) / 2, ww - 3, False)
         if i == n_white - 1:
             break
         if (pitch + 2) % 12 in WHITE and (pitch % 12) in WHITE and (pitch % 12) not in (4, 11):
-            keys[pitch + 1] = ((i + 1) * ww, ww * 0.55, True)
+            lean = {1: -0.08, 3: 0.08, 6: -0.08, 8: 0.0, 10: 0.08}.get((pitch + 1) % 12, 0.0) if lean_on else 0.0
+            keys[pitch + 1] = (edges[i + 1] + lean * ww, ww * 0.55, True)
             pitch += 2
         else:
             pitch += 1
@@ -23,9 +27,14 @@ def layout(first_midi, n_white, width):
 
 
 def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, kb_h=120,
-                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240, left_white=False, right_key=None, effects=False, key_hold_s=0.0):
+                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240, left_white=False, right_key=None, effects=False, key_hold_s=0.0, uneven_keys=False):
     """notes: list of (pitch, on, off, 'R'|'L'). Notes start after intro_s."""
-    keys = layout(first_midi, n_white, w)
+    edges = None
+    if uneven_keys:  # keys of different widths on a keyboard inset from the frame edges, with shaded outer keys
+        rng0 = np.random.default_rng(7)
+        wd = rng0.uniform(0.85, 1.15, n_white)
+        edges = 36 + np.concatenate([[0], np.cumsum(wd / wd.sum() * (w - 72))])
+    keys = layout(first_midi, n_white, w, edges, lean_on=uneven_keys)
     L_BAR = (255, 255, 255) if left_white else LEFT_BGR  # white left hand like some real videos
     R_BAR = RIGHT_BGR
     R_KEY = right_key or RIGHT_BGR  # bars and lit keys may differ in color
@@ -47,9 +56,17 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
             cv2.putText(img, "INTRO", (w // 3, h // 2), cv2.FONT_HERSHEY_SIMPLEX, 3, (200, 200, 200), 6)
             vw.write(img)
             continue
-        img[kb_y:] = white_level
-        for i in range(1, n_white):
-            img[kb_y:, int(i * ww)] = 70
+        if edges is None:
+            img[kb_y:] = white_level
+            for i in range(1, n_white):
+                img[kb_y:, int(i * ww)] = 70
+        else:
+            img[kb_y:] = 20
+            img[kb_y:, int(edges[0]) : int(edges[-1])] = white_level
+            for e in edges[1:-1]:
+                img[kb_y:, int(e)] = 70
+            for a, b in ((edges[0], edges[2]), (edges[-3], edges[-1])):  # shaded outer keys
+                img[kb_y:, int(a) : int(b)] = (img[kb_y:, int(a) : int(b)] * 0.62).astype(np.uint8)
         for i, (p, a, b, hand) in enumerate(notes):  # lit white keys go under the black keys
             xc, kw, black = keys[p]
             la, lb = lit_window[i]

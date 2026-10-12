@@ -345,5 +345,20 @@ def test_black_keys_are_found_where_they_really_sit(tmp_path):
     path = tmp_path / "k.avi"
     render_video(path, [(60, 0.5, 1.0, "R"), (40, 0.5, 1.0, "L")])
     cal = run_calibration(path, tmp_path, Settings(quantize="off"))
-    assert cal.black_offsets is not None and len(cal.black_offsets) == cal.n_white - 1
-    assert all(abs(o) <= 0.3 * (cal.x1 - cal.x0 + 1) / cal.n_white for o in cal.black_offsets)
+    assert cal.white_edges is not None and len(cal.white_edges) == cal.n_white + 1
+    assert cal.black_centers is not None and len(cal.black_centers) == cal.n_white - 1
+
+
+def test_uneven_keys_on_an_inset_keyboard_with_shaded_outer_keys(tmp_path):
+    """Key lines are measured one by one, so keys of different widths, shaded outer keys and a keyboard that
+    doesn't reach the frame edges are all handled."""
+    notes = [(21, 0.5, 1.0, "L"), (24, 0.5, 1.0, "L"), (44, 1.2, 1.7, "L"), (61, 0.5, 1.0, "R"), (66, 1.2, 1.7, "R"),
+             (70, 2.0, 2.5, "R"), (104, 0.5, 1.0, "R"), (108, 1.2, 1.7, "R"), (103, 2.0, 2.5, "R")]
+    path = tmp_path / "uneven.avi"
+    render_video(path, notes, speed=260.0, uneven_keys=True)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    assert cal.n_white == 52 and cal.first_midi == 21
+    assert cal.white_edges[0] < 45 and cal.white_edges[-1] > 1280 - 45
+    res = run_extraction(path, tmp_path, cal, s)
+    assert sorted(n["pitch"] for n in res["notes"]) == sorted(p for p, *_ in notes)

@@ -127,7 +127,7 @@ async def update_preview(jid: str, request: Request):
     if not job.calibration:
         raise HTTPException(409, "calibration not ready")
     body = await request.json()
-    cal = Calibration.from_dict({**job.calibration.to_dict(), **(body.get("calibration") or {})})
+    cal = job.calibration.with_overrides(body.get("calibration"))
     settings = _settings({**job.settings.__dict__, **(body.get("settings") or {})})
     path = write_preview(job.dir, cal, settings)
     return Response(path.read_bytes(), media_type="image/png")
@@ -140,7 +140,7 @@ async def process(jid: str, request: Request):
         raise HTTPException(409, f"job is {job.status}")
     body = await request.json() if await request.body() else {}
     try:
-        cal = Calibration.from_dict({**job.calibration.to_dict(), **(body.get("calibration") or {})})
+        cal = job.calibration.with_overrides(body.get("calibration"))
     except TypeError as e:
         raise HTTPException(422, str(e))
     settings = _settings({**job.settings.__dict__, **(body.get("settings") or {})})

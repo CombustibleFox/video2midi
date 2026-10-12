@@ -77,6 +77,8 @@ Pale or glowing bars (white, washed out by bloom) no longer fool the gap detecto
 
 On the result page, "Video colors" draws the piano roll and the hand labels in the note colors seen in the video instead of the theme's. Black-key boxes in the calibration preview now sit where the black keys really are (they lean off the line between two white keys).
 
+The key guides in the calibration preview come from measuring every line between two white keys and every black key in the frame, not from dividing the keyboard's start-to-end width evenly. Keys of different widths, shaded outer keys and keyboards inset from the frame edges are handled. If you edit the keyboard's left/right edge or key count, the measured positions are dropped and the keys are spaced evenly between the edges you set.
+
 ## Sharing a problem spot
 
 On the detection step and on the result page there is a **Save a clip or frame of the original video** box. Enter a video time (or, on the result page, move the piano-roll playhead and press **Use playhead**) and download a clip of up to 60 seconds (`.mp4`, no audio) or a full-resolution frame (`.png`). Clips use ffmpeg when it is installed and fall back to OpenCV otherwise. The piano roll starts at the first note, so the result page shows the offset to convert piano-roll time to video time.
