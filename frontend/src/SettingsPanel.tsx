@@ -12,13 +12,13 @@ export default function SettingsPanel({ value, onChange }: Props) {
   const set = (patch: Partial<Settings>) => onChange({ ...value, ...patch });
   return (
     <div className="grid">
-      <label title="Only when snapping to a grid. Leave empty to detect the tempo automatically.">
+      <label title="Leave empty to detect the tempo automatically. With exact timing, notes keep their times and only the tempo written in the file changes.">
         Tempo override (BPM)
         <input type="number" min={20} max={300} placeholder="auto" value={value.tempo_override ?? ""}
-          disabled={value.quantize === "off"} onChange={(e) => set({ tempo_override: num(e.target.value) })} />
+          onChange={(e) => set({ tempo_override: num(e.target.value) })} />
       </label>
       <label className="check" title="Follow ritardandos and new sections with tempo changes in the MIDI. Off writes one steady tempo. A tempo override also turns this off.">
-        <input type="checkbox" checked={value.variable_tempo && value.tempo_override == null} disabled={value.quantize === "off" || value.tempo_override != null}
+        <input type="checkbox" checked={value.variable_tempo && value.tempo_override == null} disabled={value.tempo_override != null}
           onChange={(e) => set({ variable_tempo: e.target.checked })} />
         Follow tempo changes
       </label>

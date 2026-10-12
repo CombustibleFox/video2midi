@@ -121,6 +121,19 @@ class TempoMap:
             return float(self.T[0] + (beat - self.B[0]) * 60.0 / self.bpms[0])
         return float(np.interp(beat, self.B, self.T))
 
+    def from_zero(self) -> "TempoMap":
+        """The same tempos with beat 0 at time 0 (for unquantized notes, which start at time 0 and may precede the
+        first grid point)."""
+        b0 = self.beat_at(0.0)
+        if self.T[0] <= 0.0:
+            keep = self.T > 0.0
+            T = np.concatenate([[0.0], self.T[keep]])
+            B = np.concatenate([[0.0], self.B[keep] - b0])
+        else:
+            T = np.concatenate([[0.0], self.T])
+            B = np.concatenate([[0.0], self.B - b0])
+        return TempoMap(T, B, self.last_bpm)
+
     def shifted(self, dt: float) -> "TempoMap":
         return TempoMap(self.T + dt, self.B, self.last_bpm)
 

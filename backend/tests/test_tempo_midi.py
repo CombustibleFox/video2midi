@@ -78,3 +78,27 @@ def test_variable_tempo_can_be_switched_off():
 
     _, tm, _ = build_result(_piece([(90, 60), (108, 70)]), Settings(quantize="1/16", variable_tempo=False))
     assert len(tm.bpms) == 1
+
+
+def test_exact_timing_keeps_note_times_and_follows_tempo_changes(tmp_path):
+    from app.pipeline import build_result
+    from app.settings import Settings
+    import mido
+
+    raw = _piece([(90, 60), (108, 70), (84, 60)])
+    notes, tm, _ = build_result(raw, Settings(quantize="off"))
+    first = min(n.start for n in raw)
+    assert sorted(round(n.start, 6) for n in notes) == sorted(round(n.start - first, 6) for n in raw)  # untouched
+    assert len(tm.bpms) >= 3
+    p = tmp_path / "exact.mid"
+    write_midi(notes, tm, str(p))
+    mid = mido.MidiFile(str(p))
+    ons, now = [], 0.0
+    # play the file back: note-on times in seconds must equal the notes' own times
+    for m in mid:
+        now += m.time
+        if m.type == "note_on" and m.velocity > 0:
+            ons.append(round(now, 2))
+    assert sorted(ons) == sorted(round(n.start, 2) for n in notes) or max(abs(a - b) for a, b in zip(sorted(ons), sorted(n.start for n in notes))) < 0.005
+    _, tm1, _ = build_result(raw, Settings(quantize="off", variable_tempo=False))
+    assert len(tm1.bpms) == 1

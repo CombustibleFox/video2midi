@@ -23,7 +23,7 @@ def layout(first_midi, n_white, width):
 
 
 def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, kb_h=120,
-                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240, left_white=False, right_key=None):
+                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240, left_white=False, right_key=None, effects=False):
     """notes: list of (pitch, on, off, 'R'|'L'). Notes start after intro_s."""
     keys = layout(first_midi, n_white, w)
     L_BAR = (255, 255, 255) if left_white else LEFT_BGR  # white left hand like some real videos
@@ -88,5 +88,25 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
                 x, y = rng.integers(0, w), rng.integers(kb_y - 40, kb_y)
                 cv2.circle(img, (int(x), int(y)), int(rng.integers(1, 4)),
                            RIGHT_BGR if rng.random() < 0.5 else LEFT_BGR, -1)
+        if effects:  # particle fountains and bloom at every landing note, marbled bars (like the glossy 3D videos)
+            rng = np.random.default_rng(1000 + f)
+            glow_layer = np.zeros_like(img)
+            for p, a, b, hand in notes:
+                if not (a <= t < b):
+                    continue
+                xc, kw, black = keys[p]
+                col = R_BAR if hand == "R" else L_BAR
+                for _ in range(30):
+                    x = int(xc + rng.normal(0, 18))
+                    y = int(kb_y - abs(rng.normal(0, 70)))
+                    sparkle = (255, 255, 255) if rng.random() < 0.5 else col
+                    cv2.circle(img, (x, y), int(rng.integers(1, 3)), sparkle, -1)
+                cv2.ellipse(glow_layer, (int(xc), kb_y), (int(kw * 1.5), 40), 0, 180, 360, col, -1)
+                cv2.ellipse(glow_layer, (int(xc), kb_y), (int(kw * 1.2), 14), 0, 0, 180, col, -1)
+            img = cv2.add(img, cv2.GaussianBlur(glow_layer, (0, 0), 14))
+            bars = img[:kb_y]
+            noise = rng.integers(-18, 19, bars.shape[:2]).astype(np.int16)[..., None]
+            lit = bars.max(axis=2, keepdims=True) > 120
+            img[:kb_y] = np.clip(bars.astype(np.int16) + noise * lit, 0, 255).astype(np.uint8)
         vw.write(img)
     vw.release()

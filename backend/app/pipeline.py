@@ -55,7 +55,19 @@ def build_result(raw: list[Note], settings: Settings) -> tuple[list[Note], Tempo
             n.start -= t0
             n.end -= t0
     if settings.quantize == "off":
-        return notes, TempoMap.constant(120.0), offset
+        # exact timing: notes keep the times they were played at; the file still carries the tempo, so a DAW's
+        # beat grid lines up with the music
+        step = GRIDS["1/16"]
+        if settings.tempo_override:
+            bpm = settings.tempo_override
+            t = onset_times(notes)
+            tm = TempoMap.constant(bpm, _resultant(t, 60.0 / bpm * step)[1] if len(t) else 0.0)
+        elif settings.variable_tempo:
+            tm = estimate_tempo_map(notes, step)
+        else:
+            bpm, phase = estimate_tempo(notes, step_beats=step)
+            tm = TempoMap.constant(bpm, phase)
+        return notes, tm.from_zero(), offset
     step = GRIDS[settings.quantize]
     if settings.tempo_override:
         bpm = settings.tempo_override
