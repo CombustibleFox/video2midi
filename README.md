@@ -73,6 +73,8 @@ Downloaded MIDI files are named after the video (the YouTube title, or the uploa
 
 Videos over a busy animated background are handled too: seam look-alikes in the scenery are ignored when there are far more of them than notes, and a one-frame dropout of a key light is treated as a real release (two touching notes) when the bar passing the key thins out at that moment, rather than as detection flicker.
 
+Pale or glowing bars (white, washed out by bloom) no longer fool the gap detector: a gap between two bars has to be dimmer than the bars around it. The keyboard's key count is also robust to a stray dark edge from the scenery between two separators.
+
 ## Sharing a problem spot
 
 On the detection step and on the result page there is a **Save a clip or frame of the original video** box. Enter a video time (or, on the result page, move the piano-roll playhead and press **Use playhead**) and download a clip of up to 60 seconds (`.mp4`, no audio) or a full-resolution frame (`.png`). Clips use ffmpeg when it is installed and fall back to OpenCV otherwise. The piano roll starts at the first note, so the result page shows the offset to convert piano-roll time to video time.

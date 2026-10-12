@@ -168,7 +168,17 @@ def detect_keyboard(med: np.ndarray) -> dict:
             kept.append(c)
     centers = kept
     # separators can be missed; count how many key widths each gap spans
-    intervals = int(sum(max(1, round(d / ww0)) for d in np.diff(centers)))
+    # (A stray separator in the middle of a gap, e.g. a dark scenery edge between two real ones, makes both halves
+    # non-integer; such gaps are added together until they span a whole number of keys.)
+    intervals, acc = 0, 0.0
+    for d in np.diff(centers):
+        acc += d
+        r = acc / ww0
+        if abs(r - round(r)) <= 0.3:
+            intervals += max(1, int(round(r)))
+            acc = 0.0
+    if acc > 0:
+        intervals += max(1, int(round(acc / ww0)))
     ww1 = (centers[-1] - centers[0]) / intervals
     n_white = max(2, int(round((x1 - x0 + 1) / ww1)))
     ww = (x1 - x0 + 1) / n_white

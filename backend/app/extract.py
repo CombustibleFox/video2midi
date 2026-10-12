@@ -21,6 +21,8 @@ LABEL_SAT_MAX, LABEL_VAL_MIN = 62, 150  # light, desaturated pixels: note-name l
 DARK_LINE_RATIO, DARK_LINE_MIN_LEVEL = 0.72, 130  # a seam row is this much dimmer than the bar around it
 MIN_SEAM_ROWS_PER_PX = 0.0019  # a real seam is a band of dark rows about this fraction of the frame height thick
 MAX_BRIDGE_FRAMES = 4  # key-off dropouts up to this long between touching notes are animation, not silence
+SEAM_CONTEXT_ROWS = 26  # rows above and below a candidate gap that show how bright the bars around it are
+SEAM_DIM_RATIO = 0.6  # a gap must be dimmer than the bars around it by this much
 MAX_SEAM_GAP = 25  # px; wider gaps are real rests that the key signal already shows
 MIN_SEAM_VOTES = 3  # frames that must agree on a seam
 MIN_OVERSHOOT_FRAMES = 4  # a key staying lit this much longer than its bar is glow, not sound
@@ -30,6 +32,9 @@ BAR_TOP_CLEAR_ROWS = 14
 BAND_ROWS = 40  # rows above the keys checked for a passing bar
 BAND_LOOKBACK = 14  # frames before a dropout that show what the bar was doing
 BRIDGE_CONTINUITY_DROP = 12  # percentage points the bar must thin out by for a dropout to count as a release
+SEAM_LAG_MAX_GAP = 20  # frames; gaps between two notes that count when measuring the seam timing
+SEAM_LAG_REACH = 15  # frames; farthest a seam can be from its gap and still be matched to it
+SEAM_LAG_MIN_SAMPLES = 4
 MIN_BAR_ROWS = 8
 HOLE_ROWS = 4  # mask holes up to this tall inside a bar are closed
 NOISY_SEAMS_PER_NOTE = 5  # more seam candidates per note than this means the background is full of look-alikes
@@ -315,6 +320,15 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
     dark_line = ~plan.black & (lane > 0.5) & (level >= DARK_LINE_MIN_LEVEL) & (lane_max < DARK_LINE_RATIO * level)
     lo_rows = lo_rows | dark_line
     hi_rows = hi_rows & ~dark_line
+    # A gap between two bars is dim compared with them. Pale bars (white, or washed out by glow) carry too little
+    # color for the hue test, which then reports the bar itself as "no bar here": a row whose brightest pixel is
+    # as bright as the bars around it is not a gap.
+    far = SEAM_CONTEXT_ROWS
+    padded_f = np.vstack([np.zeros((far, lane_max.shape[1]), np.int16), lane_max, np.zeros((far, lane_max.shape[1]), np.int16)])
+    up = np.maximum.reduce([padded_f[far - d : far - d + n] for d in range(1, far + 1)])
+    down = np.maximum.reduce([padded_f[far + d : far + d + n] for d in range(1, far + 1)])
+    around = np.minimum(up, down)
+    lo_rows = lo_rows & ~((around >= DARK_LINE_MIN_LEVEL) & (lane_max >= SEAM_DIM_RATIO * around))
     # Is a bar passing the keys right now? A bar leaves a bright lane just above the key; the gap between two
     # bars (a real release) leaves rows that are dim. A detection flicker doesn't change the bar.
     nb = plan.y_hi - plan.y_lo
@@ -549,12 +563,35 @@ def _bar_gap_at(L: Labels, k: int, a: int, b: int) -> bool:
     return int(before.max()) - int(L.strength[a:b, k].min()) >= BRIDGE_CONTINUITY_DROP
 
 
+def _seam_lag(L: Labels, splits: dict[int, list[tuple[float, float]]]) -> float:
+    """Frames to add to a seam's computed arrival so that it lands in the middle of the gap between the two notes.
+
+    The arrival is worked out from where the bar's edge was seen, and sparks, glow and fading bars shift that by a
+    different amount in every video. The gaps between lit runs of the same key, which have a seam in them, show
+    how big the shift is here."""
+    shifts = []
+    for k, clusters in splits.items():
+        if not clusters:
+            continue
+        runs = _runs(L.labels[:, k])
+        for prev, gap, nxt in zip(runs, runs[1:], runs[2:]):
+            if prev[0] and not gap[0] and nxt[0] and gap[2] - gap[1] <= SEAM_LAG_MAX_GAP:
+                centre = (gap[1] + gap[2]) / 2
+                near = [centre - (e - L.first) for e, _ in clusters if abs(centre - (e - L.first)) <= SEAM_LAG_REACH]
+                if near:
+                    shifts.append(min(near, key=abs))
+    if len(shifts) < SEAM_LAG_MIN_SAMPLES:
+        return 0.0
+    return float(np.clip(np.median(shifts), -SEAM_LAG_REACH, SEAM_LAG_REACH))
+
+
 def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, float, float, int]]:
     """Debounce each key's on/off signal. Returns (pitch, start_s, end_s, color_index)."""
     labels, pitches, fps, first_frame = L.labels, L.pitches, L.fps, L.first
     min_frames = max(1, int(np.ceil(s.min_note_s * fps)))
     fall = estimate_fall(L)
     splits = seam_splits(L, fall) if fall else {}
+    lag = _seam_lag(L, splits)
     out = []
     for k, pitch in enumerate(pitches):
         runs = _runs(labels[:, k])
@@ -572,7 +609,7 @@ def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, fl
         # Some videos switch the key light off for a couple of frames between touching notes (a repeat, or
         # the other hand taking over the same key). When the bars show a seam there, the notes touch: the
         # first ends and the second starts at the seam. A real rest leaves no seam and is kept.
-        seams_k = sorted(splits.get(k, []))
+        seams_k = sorted((e + lag, t) for e, t in splits.get(k, []))
         dropped: set[int] = set()  # extra seam clusters around a bridged gap: cut at one seam only
         joined: list[list] = []
         for i, r in enumerate(merged):
