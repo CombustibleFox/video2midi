@@ -4,6 +4,10 @@ import ClipDownload from "./ClipDownload";
 import PianoRoll from "./PianoRoll";
 import { Player } from "./player";
 import { fmtTime } from "./notes";
+import { useStored } from "./storage";
+
+/** A hue from the video as a CSS color (-1 means white notes). */
+const hueCss = (h: number) => (h < 0 ? "#f1f1f1" : `hsl(${h} 85% 58%)`);
 
 interface Props {
   jobId: string;
@@ -23,11 +27,15 @@ export default function ResultView({ jobId, themeId, onAdjust, onReset }: Props)
   const [rate, setRate] = useState(1);
   const [zoom, setZoom] = useState(80);
   const player = useRef<Player | null>(null);
+  const [pref, setPref] = useStored("v2m.videoColors", { on: false });
 
   useEffect(() => {
     getResult(jobId).then(setRes).catch((e) => setError(e.message));
   }, [jobId]);
 
+  const hh = res?.hand_hues;
+  const videoColors = hh && hh.R !== undefined && hh.L !== undefined && hh.R !== hh.L ? { R: hueCss(hh.R), L: hueCss(hh.L) } : null;
+  const colors = pref.on ? videoColors : null;
   const stem = res?.file_stem || "output";
   const tempos = res?.tempo_map?.map((t) => Math.round(t.bpm)) ?? [];
   const changes = tempos.length > 1;
@@ -106,7 +114,7 @@ export default function ResultView({ jobId, themeId, onAdjust, onReset }: Props)
   };
 
   return (
-    <div className="card result">
+    <div className="card result" style={colors ? ({ "--right": colors.R, "--left": colors.L } as React.CSSProperties) : undefined}>
       <h2>Your MIDI is ready 🎉</h2>
       {res.title && <p className="muted small" title="Downloads are named after the video">{res.title}</p>}
 
@@ -134,13 +142,18 @@ export default function ResultView({ jobId, themeId, onAdjust, onReset }: Props)
             <span className="spacer" />
             <button type="button" className={"chip r" + (hands.R ? " on" : "")} aria-pressed={hands.R} onClick={() => flip("R")}>Right hand</button>
             <button type="button" className={"chip l" + (hands.L ? " on" : "")} aria-pressed={hands.L} onClick={() => flip("L")}>Left hand</button>
+            {videoColors && (
+              <label className="inline" title="Draw the piano roll and hand labels in the note colors seen in the video">
+                <input type="checkbox" checked={pref.on} onChange={(e) => setPref({ on: e.target.checked })} /> Video colors
+              </label>
+            )}
             <label className="inline">Speed
               <select value={rate} onChange={(e) => { const r = Number(e.target.value); setRate(r); restartWith(hands, r); }}>
                 {SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}
               </select>
             </label>
           </div>
-          <PianoRoll notes={res.notes} duration={duration} time={time} zoom={zoom} themeId={themeId} onSeek={seek} />
+          <PianoRoll notes={res.notes} duration={duration} time={time} zoom={zoom} themeId={themeId} colors={colors} onSeek={seek} />
           <div className="roll-tools">
             <label className="inline">Zoom
               <input type="range" min={30} max={200} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} />

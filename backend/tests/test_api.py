@@ -37,6 +37,7 @@ def test_upload_flow(tmp_path, monkeypatch):
     assert wait(c, jid, {"done"})["status"] == "done"
     notes = c.get(f"/jobs/{jid}/notes").json()
     assert len(notes["notes"]) == 10
+    assert set(notes["hand_hues"]) == {"R", "L"} and notes["hand_hues"]["R"] != notes["hand_hues"]["L"]
     assert c.get(f"/jobs/{jid}/midi").content[:4] == b"MThd"
     assert c.delete(f"/jobs/{jid}").status_code == 200
     assert c.get(f"/jobs/{jid}").status_code == 404

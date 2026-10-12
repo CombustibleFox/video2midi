@@ -59,6 +59,7 @@ export interface NoteOut {
 
 export interface Result {
   title?: string | null;
+  hand_hues?: { R?: number; L?: number }; // the note colors seen in the video (hue in degrees, -1 = white)
   file_stem?: string; // the video's name as a safe file name
   bpm: number;
   tempo_map?: { time: number; beat: number; bpm: number }[];

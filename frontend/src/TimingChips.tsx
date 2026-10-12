@@ -4,7 +4,7 @@ const OPTIONS: { value: string; label: string; hint: string }[] = [
   { value: "1/32", label: "Snap to 1/32", hint: "Tidy rhythm for sheet music apps. Finest grid, keeps fast notes." },
   { value: "1/16", label: "1/16", hint: "Tidier, but fast ornaments get nudged." },
   { value: "1/8", label: "1/8", hint: "Very tidy; only for simple rhythms." },
-  { value: "off", label: "Exact timing", hint: "Keep the video's exact timing (fixed 120 BPM)." },
+  { value: "off", label: "Exact timing", hint: "Keep the video's exact timing." },
 ];
 
 export default function TimingChips({ value, onChange }: { value: Settings; onChange: (s: Settings) => void }) {

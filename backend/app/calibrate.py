@@ -27,6 +27,7 @@ class Calibration:
     first_midi: int = 21  # MIDI pitch of the leftmost (white) key
     hues: list[float] | None = None  # note colors as hue in degrees (0-360); -1 = white bars
     key_hues: list[float] | None = None  # the color each class lights its key in (defaults to hues)
+    black_offsets: list[float] | None = None  # pixels each black key sits off the boundary of the white keys around it
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -91,7 +92,8 @@ def key_layout(cal: Calibration) -> dict[int, tuple[float, float]]:
         if i == cal.n_white - 1:
             break
         if BLACK_AFTER[(first_white + i) % 7]:
-            out[pitch + 1] = (cal.x0 + (i + 1) * ww, ww * 0.15)
+            shift = cal.black_offsets[i] if cal.black_offsets and i < len(cal.black_offsets) else 0.0
+            out[pitch + 1] = (cal.x0 + (i + 1) * ww + shift, ww * 0.15)
             pitch += 2
         else:
             pitch += 1
@@ -192,6 +194,20 @@ def detect_keyboard(med: np.ndarray) -> dict:
         lo, hi = int(bx - 0.15 * ww), int(bx + 0.15 * ww) + 1
         has_black.append(float(row[max(lo, 0) : hi].mean()) < 100)
 
+    # real black keys are not centered on the line between two white keys (C#, F# lean left, D#, A# right)
+    black_offsets = []
+    for i in range(1, n_white):
+        off = 0.0
+        if has_black[i - 1]:
+            bx = x0 + i * ww
+            lo, hi = max(int(bx - 0.5 * ww), 0), int(bx + 0.5 * ww) + 1
+            dark = np.flatnonzero(row[lo:hi] < 100) + lo
+            if len(dark):
+                runs = np.split(dark, np.flatnonzero(np.diff(dark) > 2) + 1)
+                run = min(runs, key=lambda r: abs((r[0] + r[-1]) / 2 - bx))
+                off = float(np.clip((run[0] + run[-1]) / 2 - bx, -0.3 * ww, 0.3 * ww))
+        black_offsets.append(round(off, 1))
+
     best_s, best_score = 0, -1
     for s in range(7):
         score = sum(int(BLACK_AFTER[(s + i) % 7] == b) for i, b in enumerate(has_black))
@@ -210,7 +226,8 @@ def detect_keyboard(med: np.ndarray) -> dict:
             if best is None or abs(center - 64) < best[0]:
                 best = (abs(center - 64), first)
         first_midi = best[1]
-    return dict(x0=x0, x1=x1, top=int(top), bottom=int(bottom), n_white=n_white, first_midi=int(first_midi))
+    return dict(x0=x0, x1=x1, top=int(top), bottom=int(bottom), n_white=n_white, first_midi=int(first_midi),
+                black_offsets=black_offsets)
 
 
 def detect_hues(frames: list[np.ndarray], cal: Calibration, hit_offset: int = 4) -> list[float]:

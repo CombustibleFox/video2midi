@@ -9,11 +9,12 @@ interface Props {
   time: number; // playhead, seconds
   zoom: number; // pixels per second
   themeId: string; // redraw when the theme changes
+  colors?: { R: string; L: string } | null; // hand colors from the video; the theme's colors when absent
   onSeek: (t: number) => void;
 }
 
 /** Piano roll drawn only for the visible window, so long pieces stay sharp at any zoom. */
-export default function PianoRoll({ notes, duration, zoom, time, themeId, onSeek }: Props) {
+export default function PianoRoll({ notes, duration, zoom, time, themeId, colors, onSeek }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [scroll, setScroll] = useState(0);
@@ -49,7 +50,7 @@ export default function PianoRoll({ notes, duration, zoom, time, themeId, onSeek
     g.scale(dpr, dpr);
     const rowA = themeColor("--roll-a", "#232833"), rowB = themeColor("--roll-b", "#1b1f27");
     const octave = themeColor("--roll-octave", "#3b4252");
-    const right = themeColor("--right", "#4cc38a"), left = themeColor("--left", "#5b9dff");
+    const right = colors?.R ?? themeColor("--right", "#4cc38a"), left = colors?.L ?? themeColor("--left", "#5b9dff");
     const edge = themeColor("--roll-edge", "transparent");
     g.clearRect(0, 0, viewW, height);
     for (let p = lo; p <= hi; p++) {
@@ -72,7 +73,7 @@ export default function PianoRoll({ notes, duration, zoom, time, themeId, onSeek
         g.strokeRect(x + 0.5, y(n.pitch) + 1.5, Math.max(1, w - 1), row - 3);
       }
     }
-  }, [notes, zoom, scroll, viewW, height, lo, hi, row, themeId]);
+  }, [notes, zoom, scroll, viewW, height, lo, hi, row, themeId, colors?.R, colors?.L]);
 
   // keep the playhead in view while playing
   useEffect(() => {

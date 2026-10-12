@@ -88,11 +88,17 @@ def run_extraction(video: Path, workdir: Path, cal: Calibration, settings: Setti
     ref_path = workdir / "median.npy"
     ref = np.load(ref_path) if ref_path.exists() else None
     progress("extracting", 0.0, "Reading notes from video")
-    raw = extract_notes(str(video), cal, settings, ref, lambda f: progress("extracting", f, "Reading notes from video"))
+    info: dict = {}
+    raw = extract_notes(str(video), cal, settings, ref, lambda f: progress("extracting", f, "Reading notes from video"), info)
     progress("exporting", 0.0, "Quantizing and writing MIDI")
     notes, tm, offset = build_result(raw, settings)
     write_midi(notes, tm, str(workdir / "output.mid"), settings.velocity)
-    result = {"bpm": tm.bpm, "tempo_map": tm.to_list(), "video_offset": round(offset, 3), "notes": [n.to_dict() for n in notes]}
+    # the note colors seen in the video (hue in degrees, -1 = white), for drawing the piano roll in them
+    colors = info.get("colors") or {}
+    hues = cal.hues or []
+    hand_hues = {h: hues[i] for h, i in colors.items() if i < len(hues)}
+    result = {"bpm": tm.bpm, "tempo_map": tm.to_list(), "video_offset": round(offset, 3), "hand_hues": hand_hues,
+              "notes": [n.to_dict() for n in notes]}
     (workdir / "notes.json").write_text(json.dumps(result))
     progress("done", 1.0, f"{len(notes)} notes")
     return result

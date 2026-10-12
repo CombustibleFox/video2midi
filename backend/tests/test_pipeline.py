@@ -338,3 +338,12 @@ def test_key_glow_lingering_after_the_bar_does_not_lengthen_notes(tmp_path):
     durs = [n["end"] - n["start"] for n in res["notes"]]
     assert len(durs) == len(notes)
     assert max(durs) < 0.42, durs  # without the bar length these would be 0.55
+
+
+def test_black_keys_are_found_where_they_really_sit(tmp_path):
+    """Black keys lean off the line between two white keys; the calibration records by how much."""
+    path = tmp_path / "k.avi"
+    render_video(path, [(60, 0.5, 1.0, "R"), (40, 0.5, 1.0, "L")])
+    cal = run_calibration(path, tmp_path, Settings(quantize="off"))
+    assert cal.black_offsets is not None and len(cal.black_offsets) == cal.n_white - 1
+    assert all(abs(o) <= 0.3 * (cal.x1 - cal.x0 + 1) / cal.n_white for o in cal.black_offsets)

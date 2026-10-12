@@ -188,7 +188,9 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); tex
 .roll-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .clipbox { border: 2px dashed var(--line); border-radius: calc(var(--radius) - 2px); padding: 10px 12px; }
 
-footer { text-align: center; color: var(--muted); font-size: 12.5px; margin-top: 22px; }
+/* a small card of its own: the page behind it can be a busy scene */
+footer { position: relative; z-index: 1; width: fit-content; max-width: 100%; margin: 22px auto 0; padding: 5px 16px; text-align: center; font-size: 12.5px;
+  color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 999px; }
 
 /* ---------- Playful extras (Road Trip, Seaside Adventure, Fox Den) ---------- */
 :root[data-playful="yes"] h2 { text-shadow: 2px 2px 0 color-mix(in srgb, var(--accent) 30%, transparent); }

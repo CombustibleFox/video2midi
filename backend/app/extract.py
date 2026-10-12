@@ -658,21 +658,28 @@ def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, fl
     return out
 
 
-def assign_hands(raw: list[tuple[int, float, float, int]], n_colors: int, split_pitch: int) -> list[Note]:
+def assign_hands(raw: list[tuple[int, float, float, int]], n_colors: int, split_pitch: int,
+                 info: dict | None = None) -> list[Note]:
+    """Hands from colors (higher-pitched color = right hand), or from the split pitch with one color. `info`, when
+    given, receives which color index each hand ended up with."""
     used = sorted({c for _, _, _, c in raw})
     if n_colors >= 2 and len(used) >= 2:
         mean = {c: np.mean([p for p, _, _, cc in raw if cc == c]) for c in used}
         right = max(mean, key=mean.get)
         hand = lambda p, c: "R" if c == right else "L"
+        if info is not None:
+            info["colors"] = {"R": right, "L": min(mean, key=mean.get)}
     else:
         hand = lambda p, c: "R" if p >= split_pitch else "L"
+        if info is not None and used:
+            info["colors"] = {"R": used[0], "L": used[0]}
     notes = [Note(p, a, b, hand(p, c)) for p, a, b, c in raw]
     notes.sort(key=lambda n: (n.start, n.pitch))
     return notes
 
 
 def extract_notes(video_path: str, cal: Calibration, s: Settings, ref: np.ndarray | None = None,
-                  progress: Callable[[float], None] | None = None) -> list[Note]:
+                  progress: Callable[[float], None] | None = None, info: dict | None = None) -> list[Note]:
     L = label_frames(video_path, cal, s, ref, progress)
     raw = labels_to_notes(L, s, len(cal.hues or []))
-    return assign_hands(raw, len(cal.hues or []), s.split_pitch)
+    return assign_hands(raw, len(cal.hues or []), s.split_pitch, info)
