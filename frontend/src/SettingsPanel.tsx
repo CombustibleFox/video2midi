@@ -52,11 +52,6 @@ export default function SettingsPanel({ value, onChange }: Props) {
         <input type="number" min={0} step={0.5} placeholder="end of video" value={value.end_s ?? ""}
           onChange={(e) => set({ end_s: num(e.target.value) })} />
       </label>
-      <label>
-        Sample height above keys (px)
-        <input type="number" min={0} max={60} value={value.hit_offset}
-          onChange={(e) => set({ hit_offset: num(e.target.value) ?? 4 })} />
-      </label>
     </div>
   );
 }

@@ -4,11 +4,13 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from .calibrate import Calibration, key_layout
+from .calibrate import Calibration, key_sample_boxes
 from .notes import Note
 from .settings import Settings
 
-SAT_MIN, VAL_MIN = 90, 80
+KEY_SAT_MIN = 80
+KEY_VAL_WHITE = 100
+KEY_VAL_BLACK = 150
 ON_FRACTION = 0.6
 
 
@@ -21,15 +23,27 @@ def _hue_tolerance(hues: list[float]) -> float:
     return min(12.0, d / 4)
 
 
+def _rect_sums(mask: np.ndarray, boxes: np.ndarray) -> np.ndarray:
+    """Sum of mask inside each (xa, xb, ya, yb) box, via an integral image."""
+    integral = np.zeros((mask.shape[0] + 1, mask.shape[1] + 1), np.int32)
+    integral[1:, 1:] = mask.cumsum(0).cumsum(1)
+    xa, xb, ya, yb = boxes.T
+    return integral[yb, xb] - integral[ya, xb] - integral[yb, xa] + integral[ya, xa]
+
+
 def label_frames(video_path: str, cal: Calibration, s: Settings, ref: np.ndarray | None = None,
                  progress: Callable[[float], None] | None = None) -> tuple[np.ndarray, list[int], float, int]:
-    """Per frame, per key: 0 = off, i+1 = lit with color i. Returns (labels, pitches, fps, first_frame)."""
-    keys = key_layout(cal)
-    pitches = sorted(keys)
-    xa = np.array([max(0, int(round(keys[p][0] - keys[p][1] * 0.5))) for p in pitches])
-    xb = np.array([max(a + 1, int(round(keys[p][0] + keys[p][1] * 0.5))) for p, a in zip(pitches, xa)])
-    hit_y = cal.top - s.hit_offset
-    y0, y1 = max(0, hit_y - 1), min(cal.height, hit_y + 2)
+    """Per frame, per key: 0 = off, i+1 = lit with color i. Returns (labels, pitches, fps, first_frame).
+
+    A key counts as pressed when its sample box is mostly filled with one of the hand colors.
+    """
+    boxes = key_sample_boxes(cal)
+    pitches = sorted(boxes)
+    # box coordinates relative to the keyboard crop
+    arr = np.array([(boxes[p][0] - cal.x0, boxes[p][1] - cal.x0, boxes[p][2] - cal.top, boxes[p][3] - cal.top)
+                    for p in pitches])
+    black = np.array([boxes[p][4] for p in pitches])
+    area = (arr[:, 1] - arr[:, 0]) * (arr[:, 3] - arr[:, 2])
     hues = [h / 2 for h in (cal.hues or [])]
     tol = _hue_tolerance(cal.hues or [])
 
@@ -52,21 +66,25 @@ def label_frames(video_path: str, cal: Calibration, s: Settings, ref: np.ndarray
         present = True
         if ref_band is not None:
             band = frame[kb_y0 : cal.bottom + 1, cal.x0 : cal.x1 + 1].astype(np.int16)
+            # lit keys are a small part of the band; an intro/outro screen differs almost everywhere
             present = float((np.abs(band - ref_band).max(axis=2) < 60).mean()) > 0.5
-        if present:
-            hsv = cv2.cvtColor(frame[y0:y1], cv2.COLOR_BGR2HSV)
+        if present and hues:
+            hsv = cv2.cvtColor(frame[cal.top : cal.bottom + 1, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV)
             H = hsv[..., 0].astype(np.int16)
-            base = (hsv[..., 1] >= SAT_MIN) & (hsv[..., 2] >= VAL_MIN)
+            lit = hsv[..., 1] >= KEY_SAT_MIN
+            # black keys often have a colored sheen when idle, so demand a brighter color for them
+            bright_w = lit & (hsv[..., 2] >= KEY_VAL_WHITE)
+            bright_b = lit & (hsv[..., 2] >= KEY_VAL_BLACK)
             fracs = []
             for hc in hues:
                 d = np.abs(H - hc)
-                m = base & (np.minimum(d, 180 - d) <= tol)
-                cs = np.concatenate([[0], np.cumsum(m.sum(axis=0))])
-                fracs.append((cs[xb] - cs[xa]) / ((y1 - y0) * (xb - xa)))
-            if fracs:
-                fr = np.stack(fracs)
-                on = fr.max(axis=0) > ON_FRACTION
-                lab = np.where(on, fr.argmax(axis=0) + 1, 0).astype(np.uint8)
+                near = np.minimum(d, 180 - d) <= tol
+                sums_w = _rect_sums(bright_w & near, arr)
+                sums_b = _rect_sums(bright_b & near, arr)
+                fracs.append(np.where(black, sums_b, sums_w) / area)
+            fr = np.stack(fracs)
+            on = fr.max(axis=0) > ON_FRACTION
+            lab = np.where(on, fr.argmax(axis=0) + 1, 0).astype(np.uint8)
         rows.append(lab)
         if progress and (idx - first) % 100 == 0:
             progress(min((idx - first) / n, 1.0))

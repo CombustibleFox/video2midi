@@ -23,7 +23,7 @@ def layout(first_midi, n_white, width):
 
 
 def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, kb_h=120,
-                 speed=300.0, intro_s=0.0, tail_s=1.0):
+                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False):
     """notes: list of (pitch, on, off, 'R'|'L'). Notes start after intro_s."""
     keys = layout(first_midi, n_white, w)
     kb_y = h - kb_h
@@ -42,9 +42,14 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
         img[kb_y:] = 240
         for i in range(1, n_white):
             img[kb_y:, int(i * ww)] = 70
+        for p, a, b, hand in notes:  # lit white keys go under the black keys
+            xc, kw, black = keys[p]
+            if not black and a <= t < b:
+                col = RIGHT_BGR if hand == "R" else LEFT_BGR
+                img[kb_y + 2 : h - 2, int(xc - kw / 2) : int(xc + kw / 2)] = col
         for p, (xc, kw, black) in keys.items():
-            if black:
-                img[kb_y : kb_y + int(0.6 * kb_h), int(xc - kw / 2) : int(xc + kw / 2)] = 15
+            if black:  # idle black keys have a faint blue sheen like real videos
+                img[kb_y : kb_y + int(0.6 * kb_h), int(xc - kw / 2) : int(xc + kw / 2)] = (60, 30, 25)
         for p, a, b, hand in notes:
             xc, kw, black = keys[p]
             col = RIGHT_BGR if hand == "R" else LEFT_BGR
@@ -53,8 +58,13 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
             top = kb_y - (b - t) * speed
             if bottom > 0 and top < kb_y and bottom > top:
                 img[max(0, int(top)) : int(bottom), x0:x1] = col
-            if a <= t < b:
-                y_end = kb_y + int((0.6 if black else 1.0) * kb_h)
-                img[kb_y + 2 : y_end - 2, x0:x1] = col
+            if black and a <= t < b:
+                img[kb_y : kb_y + int(0.6 * kb_h), x0:x1] = col
+        if glow:  # sparks and glow where the notes land, like real videos
+            rng = np.random.default_rng(f)
+            for _ in range(60):
+                x, y = rng.integers(0, w), rng.integers(kb_y - 40, kb_y)
+                cv2.circle(img, (int(x), int(y)), int(rng.integers(1, 4)),
+                           RIGHT_BGR if rng.random() < 0.5 else LEFT_BGR, -1)
         vw.write(img)
     vw.release()

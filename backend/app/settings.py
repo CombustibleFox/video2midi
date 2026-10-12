@@ -14,7 +14,7 @@ class Settings:
     velocity: int = 80
     start_s: float = 0.0
     end_s: float | None = None
-    hit_offset: int = 4  # pixels above the keyboard where notes are sampled
+    hit_offset: int = 4  # pixels above the keyboard where note colors are learned
     trim_to_first_note: bool = True
 
     @classmethod

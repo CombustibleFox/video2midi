@@ -97,6 +97,28 @@ def key_layout(cal: Calibration) -> dict[int, tuple[float, float]]:
     return out
 
 
+def key_sample_boxes(cal: Calibration) -> dict[int, tuple[int, int, int, int, bool]]:
+    """pitch -> (xa, xb, ya, yb, is_black): where to look for each key's lit color, in frame pixels.
+
+    White keys are read on the lower part of the key (below the black keys), black keys on their upper
+    part. Reading the keys themselves, not the falling notes, avoids the glow and sparks that many
+    videos draw where the notes land.
+    """
+    h = cal.bottom - cal.top + 1
+    ww = (cal.x1 - cal.x0 + 1) / cal.n_white
+    out = {}
+    for pitch, (xc, hw) in key_layout(cal).items():
+        black = pitch % 12 in (1, 3, 6, 8, 10)
+        if black:
+            half, ya, yb = 0.12 * ww, cal.top + 0.20 * h, cal.top + 0.45 * h
+        else:
+            half, ya, yb = 0.30 * ww, cal.top + 0.80 * h, cal.top + 0.95 * h
+        xa = max(0, int(round(xc - half)))
+        xb = max(xa + 1, int(round(xc + half)))
+        out[pitch] = (xa, xb, int(ya), max(int(ya) + 1, int(yb)), black)
+    return out
+
+
 def detect_keyboard(med: np.ndarray) -> dict:
     minc = med.min(axis=2)
     bright = minc > 170
@@ -209,10 +231,9 @@ def render_preview(frame: np.ndarray, cal: Calibration, hit_offset: int = 4) -> 
     img = frame.copy()
     cv2.rectangle(img, (cal.x0, cal.top), (cal.x1, cal.bottom), (0, 255, 255), 2)
     hy = cal.top - hit_offset
-    cv2.line(img, (cal.x0, hy), (cal.x1, hy), (0, 0, 255), 2)
-    for pitch, (xc, hw) in key_layout(cal).items():
-        black = pitch % 12 in (1, 3, 6, 8, 10)
-        cv2.circle(img, (int(xc), hy - 10), 2, (255, 0, 255) if black else (255, 255, 0), -1)
+    for pitch, (xa, xb, ya, yb, black) in key_sample_boxes(cal).items():
+        xc = (xa + xb) / 2
+        cv2.rectangle(img, (xa, ya), (xb, yb), (255, 0, 255) if black else (0, 0, 255), 1)
         if pitch % 12 == 0:
             cv2.putText(img, f"C{pitch // 12 - 1}", (int(xc) - 8, max(12, hy - 18)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)

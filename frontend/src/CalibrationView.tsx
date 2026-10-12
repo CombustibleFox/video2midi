@@ -49,7 +49,7 @@ export default function CalibrationView({ jobId, initialSettings, onConfirm }: P
     <div className="card">
       <h2>2. Check the detection</h2>
       <p className="muted">
-        Yellow box = keyboard, red line = where notes are read, dots = key positions, swatches (top left) = hand colors.
+        Yellow box = keyboard, small boxes = where each key is checked for a lit color (red = white keys, purple = black keys), swatches (top left) = hand colors. Every box should sit on its own key.
         Adjust anything that looks off; the preview updates.
       </p>
       {img ? <img className="preview" src={img} alt="Calibration preview" /> : <div className="preview placeholder">Rendering…</div>}
