@@ -159,3 +159,11 @@ def midi(jid: str):
     if job.status != "done" or not p.exists():
         raise HTTPException(409, "result not ready")
     return FileResponse(p, media_type="audio/midi", filename="output.mid")
+
+
+# Serve the built frontend (npm run build in frontend/) from the same port.
+_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _dist.is_dir():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")

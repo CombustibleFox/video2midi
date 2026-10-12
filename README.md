@@ -25,3 +25,16 @@ python -m app.cli "https://youtu.be/1BhX5hDaj5Y" -o out.mid --workdir ../run1
 
 Check `run1/preview.png` (detected keyboard, hit line, note colors) and the printed note counts.
 `--calibrate-only` stops after the preview.
+
+## Web app
+
+```
+# one-time
+cd frontend && npm install && npm run build && cd ..
+# run (serves the API and the built UI)
+cd backend && uvicorn app.main:app --port 8000
+# open http://localhost:8000
+```
+
+For frontend development run `npm run dev` in `frontend/` (http://localhost:5173, proxies API calls to :8000).
+Flow: paste a YouTube URL or upload a file, check/adjust the detected keyboard and colors, convert, preview in the piano roll with playback, then download the `.mid`.
