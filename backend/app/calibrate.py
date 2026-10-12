@@ -121,7 +121,10 @@ def key_sample_boxes(cal: Calibration) -> dict[int, tuple[int, int, int, int, bo
 
 def detect_keyboard(med: np.ndarray) -> dict:
     minc = med.min(axis=2)
-    bright = minc > 170
+    # "bright" is relative to this video: some keyboards are a dim gray, not white. The brightest 1% of
+    # the lower half is the white keys; the keyboard is whatever is at least ~70% as bright as that.
+    white = float(np.percentile(minc[minc.shape[0] // 2 :], 99))
+    bright = minc > max(90.0, min(170.0, 0.7 * white))
     rowfrac = bright.mean(axis=1)
     mx = rowfrac.max()
     if mx < 0.3:

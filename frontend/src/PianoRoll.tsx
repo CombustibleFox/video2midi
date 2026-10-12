@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { NoteOut } from "./api";
 import { isBlack, noteName } from "./notes";
 import { themeColor } from "./themes";
@@ -18,6 +18,7 @@ export default function PianoRoll({ notes, duration, zoom, time, themeId, onSeek
   const canvas = useRef<HTMLCanvasElement>(null);
   const [scroll, setScroll] = useState(0);
   const [viewW, setViewW] = useState(800);
+  const leftTime = useRef(0); // time at the left edge, so zooming keeps your place
 
   const lo = Math.min(...notes.map((n) => n.pitch), 60) - 1;
   const hi = Math.max(...notes.map((n) => n.pitch), 60) + 1;
@@ -25,6 +26,11 @@ export default function PianoRoll({ notes, duration, zoom, time, themeId, onSeek
   const height = (hi - lo + 1) * row;
   const total = Math.max(viewW, Math.ceil(duration * zoom) + 40);
   const y = (p: number) => (hi - p) * row;
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollLeft = leftTime.current * zoom;
+  }, [zoom]);
 
   useEffect(() => {
     const el = scroller.current!;
@@ -86,13 +92,13 @@ export default function PianoRoll({ notes, duration, zoom, time, themeId, onSeek
           <span key={p} style={{ top: y(p) + row / 2 - 6 }}>{noteName(p)}</span>
         ))}
       </div>
-      <div className="roll" ref={scroller} onScroll={(e) => setScroll(e.currentTarget.scrollLeft)}>
+      <div className="roll" ref={scroller} onScroll={(e) => { leftTime.current = e.currentTarget.scrollLeft / zoom; setScroll(e.currentTarget.scrollLeft); }}>
         <div className="roll-inner" style={{ width: total, height }}
           onClick={(e) => {
             const r = scroller.current!.getBoundingClientRect();
             onSeek(Math.max(0, (e.clientX - r.left + scroller.current!.scrollLeft) / zoom));
           }}>
-          <canvas ref={canvas} style={{ width: viewW, height, left: scroll }} />
+          <canvas ref={canvas} style={{ width: viewW, height }} />  {/* sticky at left:0 (see CSS): it stays put while the notes scroll under it */}
           <div className="playhead" style={{ left: time * zoom }} />
         </div>
       </div>

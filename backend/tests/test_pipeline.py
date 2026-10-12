@@ -272,3 +272,16 @@ def test_hand_change_on_the_same_key_has_no_rest_and_no_late_start(tmp_path):
         assert len(pair) == 2 and pair[0]["hand"] != pair[1]["hand"], pair
         assert pair[1]["start"] - pair[0]["end"] < 0.03, pair  # no invented rest
         assert abs(pair[1]["start"] - (truth - t0)) < 0.04, (pair, truth - t0)  # not delayed
+
+
+def test_dim_gray_keyboard_is_found(tmp_path):
+    """Some videos draw the white keys as dim gray (~145) instead of white; the keyboard must still be found whole."""
+    notes = [(60 + i, 0.5 + i * 0.5, 0.9 + i * 0.5, "R") for i in range(4)] + [(40 + i, 0.5 + i * 0.5, 1.1 + i * 0.5, "L") for i in range(4)]
+    path = tmp_path / "dim_keys.avi"
+    render_video(path, notes, white_level=145)
+    cal, _, _ = calibrate(str(path))
+    assert cal.n_white == 52 and cal.first_midi == 21
+    assert abs(cal.top - 600) <= 3 and cal.bottom >= 716  # the whole 120-pixel keyboard, not a sliver
+    s = Settings(quantize="off")
+    res = run_extraction(path, tmp_path, run_calibration(path, tmp_path, s), s)
+    assert sorted(n["pitch"] for n in res["notes"]) == sorted(p for p, *_ in notes)

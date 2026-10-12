@@ -23,7 +23,7 @@ def layout(first_midi, n_white, width):
 
 
 def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, kb_h=120,
-                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0):
+                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0, white_level=240):
     """notes: list of (pitch, on, off, 'R'|'L'). Notes start after intro_s."""
     keys = layout(first_midi, n_white, w)
     lit_window = {}
@@ -44,7 +44,7 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
             cv2.putText(img, "INTRO", (w // 3, h // 2), cv2.FONT_HERSHEY_SIMPLEX, 3, (200, 200, 200), 6)
             vw.write(img)
             continue
-        img[kb_y:] = 240
+        img[kb_y:] = white_level
         for i in range(1, n_white):
             img[kb_y:, int(i * ww)] = 70
         for i, (p, a, b, hand) in enumerate(notes):  # lit white keys go under the black keys
