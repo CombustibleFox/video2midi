@@ -8,7 +8,8 @@ import cv2
 Progress = Callable[[str, float, str], None]
 
 
-def download_youtube(url: str, out_dir: Path, progress: Progress | None = None) -> Path:
+def download_youtube(url: str, out_dir: Path, progress: Progress | None = None,
+                     cookies_from_browser: str | None = None) -> Path:
     import yt_dlp
 
     def hook(d: dict) -> None:
@@ -26,6 +27,8 @@ def download_youtube(url: str, out_dir: Path, progress: Progress | None = None) 
         "no_warnings": True,
         "progress_hooks": [hook],
     }
+    if cookies_from_browser:  # e.g. "chrome" or "firefox"; helps when YouTube asks to confirm you're not a bot
+        opts["cookiesfrombrowser"] = (cookies_from_browser,)
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
     files = sorted(p for p in out_dir.glob("source.*") if p.suffix not in (".part", ".ytdl"))
