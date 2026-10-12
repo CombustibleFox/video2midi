@@ -7,13 +7,15 @@ import sys, mido, numpy as np, collections
 def load(path):
     mid=mido.MidiFile(path)
     # absolute time in seconds per track using merged tempo map
-    tempos=[(0,500000)]
+    tempos=[]
     for tr in mid.tracks:
         t=0
         for m in tr:
             t+=m.time
             if m.type=="set_tempo": tempos.append((t,m.tempo))
     tempos=sorted(set(tempos))
+    if not tempos or tempos[0][0] > 0: tempos.insert(0,(0,500000))  # MIDI default
+    tempos=list({t: m for t, m in tempos}.items())  # last tempo at a tick wins
     def sec(tick):
         s=0;last=0;tp=500000
         for tt,tm in tempos:
@@ -34,6 +36,8 @@ def load(path):
     return mid,tracks,bpms
 _,ours,_=load(sys.argv[1])
 _,ref,_=load(sys.argv[2])
+# track order differs between files: put the higher-pitched track first (right hand)
+ours.sort(key=lambda t: -np.mean([n[0] for n in t[1]])); ref.sort(key=lambda t: -np.mean([n[0] for n in t[1]]))
 def match(a,b,tol):
     """greedy one-to-one match by pitch, nearest onset within tol. returns pairs, unmatched a, unmatched b"""
     byp=collections.defaultdict(list)
