@@ -1,10 +1,12 @@
 import type { NoteOut } from "./api";
 
-/** Minimal Web Audio piano-ish synth: two detuned triangle/sine partials with a decaying envelope. */
+/** Minimal Web Audio piano-ish synth: two partials with a decaying envelope. */
 export class Player {
   private ctx: AudioContext | null = null;
+  private master: GainNode | null = null;
   private startedAt = 0; // ctx time corresponding to song time `offset`
   private offset = 0;
+  private rate = 1;
   playing = false;
   private stopTimer: number | undefined;
 
@@ -12,10 +14,10 @@ export class Player {
 
   get position(): number {
     if (!this.playing || !this.ctx) return this.offset;
-    return Math.min(this.duration, this.offset + (this.ctx.currentTime - this.startedAt));
+    return Math.min(this.duration, this.offset + (this.ctx.currentTime - this.startedAt) * this.rate);
   }
 
-  async play(from: number, hands: { R: boolean; L: boolean }) {
+  async play(from: number, hands: { R: boolean; L: boolean }, rate = 1) {
     this.stop(from);
     this.ctx ??= new AudioContext();
     await this.ctx.resume();
@@ -24,11 +26,12 @@ export class Player {
     master.gain.value = 0.25;
     master.connect(ctx.destination);
     this.master = master;
+    this.rate = rate;
     const t0 = ctx.currentTime + 0.05;
     for (const n of this.notes) {
       if (!hands[n.hand] || n.end <= from) continue;
-      const start = t0 + Math.max(0, n.start - from);
-      const end = t0 + n.end - from;
+      const start = t0 + Math.max(0, n.start - from) / rate;
+      const end = t0 + (n.end - from) / rate;
       const f = 440 * Math.pow(2, (n.pitch - 69) / 12);
       const g = ctx.createGain();
       const peak = 0.5 * Math.min(1, 1.6 - n.pitch / 90);
@@ -53,10 +56,8 @@ export class Player {
     this.startedAt = t0;
     this.playing = true;
     window.clearTimeout(this.stopTimer);
-    this.stopTimer = window.setTimeout(() => this.stop(this.duration), (this.duration - from + 0.5) * 1000);
+    this.stopTimer = window.setTimeout(() => this.stop(this.duration), ((this.duration - from) / rate + 0.5) * 1000);
   }
-
-  private master: GainNode | null = null;
 
   stop(position = 0) {
     window.clearTimeout(this.stopTimer);

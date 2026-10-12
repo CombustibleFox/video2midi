@@ -141,3 +141,5 @@ export async function downloadFile(url: string, filename: string): Promise<void>
 export const clipUrl = (id: string, start: number, duration: number) =>
   `/jobs/${id}/clip?start=${start}&duration=${duration}`;
 export const frameUrl = (id: string, t: number) => `/jobs/${id}/frame?t=${t}`;
+
+export const midiUrl = (id: string, hand: "both" | "R" | "L" = "both") => `/jobs/${id}/midi?hand=${hand}`;

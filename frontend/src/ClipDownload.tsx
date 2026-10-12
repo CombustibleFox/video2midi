@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { clipUrl, downloadFile, frameUrl } from "./api";
 
+
 interface Props {
   jobId: string;
   /** Start suggested by the caller (video seconds), e.g. the playhead position. */
@@ -10,7 +11,7 @@ interface Props {
   playhead?: number;
 }
 
-const fmt = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+import { fmtTime as fmt } from "./notes";
 
 export default function ClipDownload({ jobId, suggestedStart = 0, offset, playhead }: Props) {
   const [start, setStart] = useState(suggestedStart);
@@ -38,7 +39,7 @@ export default function ClipDownload({ jobId, suggestedStart = 0, offset, playhe
 
   return (
     <details className="clipbox">
-      <summary>Save a clip or frame of the original video (for sharing a problem spot)</summary>
+      <summary>Tools: save a clip or frame of the video</summary>
       <div className="grid">
         <label>
           Video time (seconds)

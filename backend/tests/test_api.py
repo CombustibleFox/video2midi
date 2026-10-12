@@ -126,3 +126,24 @@ def test_result_reports_video_offset(tmp_path, monkeypatch):
     res = c.get(f"/jobs/{jid}/notes").json()
     assert abs(res["video_offset"] - 1.0) < 0.15
     assert min(n["start"] for n in res["notes"]) < 0.05
+
+
+def test_download_one_hand_only(tmp_path, monkeypatch):
+    import mido
+
+    c, jid = _make_job(tmp_path, monkeypatch)
+    c.post(f"/jobs/{jid}/process", json={})
+    wait(c, jid, {"done"})
+
+    def count(hand):
+        r = c.get(f"/jobs/{jid}/midi", params={"hand": hand})
+        assert r.status_code == 200
+        p = tmp_path / f"{hand}.mid"
+        p.write_bytes(r.content)
+        mid = mido.MidiFile(str(p))
+        return [sum(m.type == "note_on" for m in t) for t in mid.tracks[1:]]
+
+    assert count("R") == [5, 0]   # right-hand file: only the Right Hand track has notes
+    assert count("L") == [0, 5]
+    assert sum(count("both")) == 10
+    assert c.get(f"/jobs/{jid}/midi", params={"hand": "X"}).status_code == 422

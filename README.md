@@ -64,3 +64,9 @@ Detection works best on 720p or 1080p downloads. At 360p the keys are only a few
 ## Sharing a problem spot
 
 On the detection step and on the result page there is a **Save a clip or frame of the original video** box. Enter a video time (or, on the result page, move the piano-roll playhead and press **Use playhead**) and download a clip of up to 60 seconds (`.mp4`, no audio) or a full-resolution frame (`.png`). Clips use ffmpeg when it is installed and fall back to OpenCV otherwise. The piano roll starts at the first note, so the result page shows the offset to convert piano-roll time to video time.
+
+## Themes and shortcuts
+
+Pick a theme from the menu in the top-right corner; it is remembered. Themes: Midnight, Daylight, Sheet Music, Neon Keys, and three playful ones with their own scenery and a mascot that rides along the progress bar: Road Trip (a little purple car), Seaside Adventure (a friendly fish) and Fox Den (a fox in autumn woods). All artwork is original and drawn in SVG/CSS; animations stop if your system asks for reduced motion.
+
+On the result page: **Space** plays/pauses, **←/→** skip 2 seconds, **Home** goes back to the start. The speed menu, hand buttons and zoom slider apply immediately. You can download both hands, only the right hand, or only the left hand.

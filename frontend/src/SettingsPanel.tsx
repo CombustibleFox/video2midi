@@ -7,50 +7,35 @@ interface Props {
 
 const num = (v: string): number | null => (v.trim() === "" || isNaN(Number(v)) ? null : Number(v));
 
+/** The less common settings. Timing grid lives in TimingChips. */
 export default function SettingsPanel({ value, onChange }: Props) {
   const set = (patch: Partial<Settings>) => onChange({ ...value, ...patch });
   return (
     <div className="grid">
-      <label>
-        Quantize
-        <select value={value.quantize} onChange={(e) => set({ quantize: e.target.value })}>
-          <option value="1/4">Quarter notes</option>
-          <option value="1/8">Eighth notes</option>
-          <option value="1/16">Sixteenth notes</option>
-          <option value="1/32">Thirty-second notes</option>
-          <option value="off">Off (exact timing, 120 BPM)</option>
-        </select>
-      </label>
-      <label>
+      <label title="Only when snapping to a grid. Leave empty to detect the tempo automatically.">
         Tempo override (BPM)
         <input type="number" min={20} max={300} placeholder="auto" value={value.tempo_override ?? ""}
-          disabled={value.quantize === "off"}
-          onChange={(e) => set({ tempo_override: num(e.target.value) })} />
+          disabled={value.quantize === "off"} onChange={(e) => set({ tempo_override: num(e.target.value) })} />
+      </label>
+      <label title="Used when the video has only one note color: notes at or above this pitch go to the right hand. 60 = middle C.">
+        Hand split pitch (one-color videos)
+        <input type="number" min={0} max={127} value={value.split_pitch} onChange={(e) => set({ split_pitch: num(e.target.value) ?? 60 })} />
       </label>
       <label>
-        Split pitch (one-color videos)
-        <input type="number" min={0} max={127} value={value.split_pitch}
-          onChange={(e) => set({ split_pitch: num(e.target.value) ?? 60 })} />
+        Note volume (1–127)
+        <input type="number" min={1} max={127} value={value.velocity} onChange={(e) => set({ velocity: num(e.target.value) ?? 80 })} />
+      </label>
+      <label title="Ignore flickers shorter than this.">
+        Shortest note (seconds)
+        <input type="number" min={0} step={0.01} value={value.min_note_s} onChange={(e) => set({ min_note_s: num(e.target.value) ?? 0.05 })} />
       </label>
       <label>
-        Velocity
-        <input type="number" min={1} max={127} value={value.velocity}
-          onChange={(e) => set({ velocity: num(e.target.value) ?? 80 })} />
+        Start at (seconds)
+        <input type="number" min={0} step={0.5} value={value.start_s} onChange={(e) => set({ start_s: num(e.target.value) ?? 0 })} />
       </label>
       <label>
-        Min note length (s)
-        <input type="number" min={0} step={0.01} value={value.min_note_s}
-          onChange={(e) => set({ min_note_s: num(e.target.value) ?? 0.05 })} />
-      </label>
-      <label>
-        Start (s)
-        <input type="number" min={0} step={0.5} value={value.start_s}
-          onChange={(e) => set({ start_s: num(e.target.value) ?? 0 })} />
-      </label>
-      <label>
-        End (s)
-        <input type="number" min={0} step={0.5} placeholder="end of video" value={value.end_s ?? ""}
-          onChange={(e) => set({ end_s: num(e.target.value) })} />
+        Stop at (seconds)
+        <input type="number" min={0} step={0.5} placeholder="end of video" value={value.end_s ?? ""} onChange={(e) => set({ end_s: num(e.target.value) })} />
       </label>
     </div>
   );

@@ -11,6 +11,8 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from .calibrate import Calibration
 from .clip import MAX_CLIP_S, cut_clip, grab_frame, video_duration
 from .jobs import JobManager
+from .midi_export import write_midi
+from .notes import Note
 from .pipeline import write_preview
 from .settings import Settings
 
@@ -190,12 +192,21 @@ def notes(jid: str):
 
 
 @app.get("/jobs/{jid}/midi")
-def midi(jid: str):
+def midi(jid: str, hand: str = "both"):
+    """The MIDI file; hand=R or hand=L gives a file with only that hand's notes."""
     job = _job(jid)
     p = job.dir / "output.mid"
     if job.status != "done" or not p.exists():
         raise HTTPException(409, "result not ready")
-    return FileResponse(p, media_type="audio/midi", filename="output.mid")
+    if hand not in ("both", "R", "L"):
+        raise HTTPException(422, "hand must be both, R or L")
+    if hand == "both":
+        return FileResponse(p, media_type="audio/midi", filename="output.mid")
+    result = json.loads((job.dir / "notes.json").read_text())
+    notes = [Note(**n) for n in result["notes"] if n["hand"] == hand]
+    out = job.dir / f"output_{hand}.mid"
+    write_midi(notes, result["bpm"], str(out), job.settings.velocity)
+    return FileResponse(out, media_type="audio/midi", filename=f"output_{'right' if hand == 'R' else 'left'}_hand.mid")
 
 
 # Serve the built frontend (npm run build in frontend/) from the same port.
