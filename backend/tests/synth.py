@@ -62,7 +62,7 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
                 cy = int((top + bottom) / 2)
                 lx0, lx1 = (x0, x1) if black else (int(xc - kw * 0.3), int(xc + kw * 0.3))
                 if 0 <= cy - 5 and cy + 5 < kb_y:
-                    img[cy - 5 : cy + 5, lx0:lx1] = (250, 250, 250)
+                    img[cy - 5 : cy + 5, lx0:lx1] = (165, 165, 165)  # light gray like the real labels
             if black and a <= t < b:
                 img[kb_y : kb_y + int(0.6 * kb_h), x0:x1] = col
         if glow:  # sparks and glow where the notes land, like real videos
