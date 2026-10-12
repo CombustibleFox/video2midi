@@ -27,6 +27,7 @@ class Calibration:
     first_midi: int = 21  # MIDI pitch of the leftmost (white) key
     hues: list[float] | None = None  # note colors as hue in degrees (0-360); -1 = white bars
     key_hues: list[float] | None = None  # the color each class lights its key in (defaults to hues)
+    glow_hue: float | None = None  # color of the glow line along the top of the keyboard, hue in degrees, if it has one
     black_offsets: list[float] | None = None  # pixels each black key sits off the boundary of the white keys around it
 
     def to_dict(self) -> dict:
@@ -327,6 +328,17 @@ def detect_key_hues(frames: list[np.ndarray], cal: Calibration, bar_hues: list[f
     return out
 
 
+def detect_glow_hue(med: np.ndarray, cal: Calibration) -> float | None:
+    """Hue (degrees) of the glow line some videos draw along the top of the keyboard, or None."""
+    y0, y1 = max(0, cal.top - 4), min(med.shape[0], cal.top + 5)
+    hsv = cv2.cvtColor(med[y0:y1, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    sel = hsv[(hsv[:, 1] >= 90) & (hsv[:, 2] >= 140)]
+    if len(sel) < 0.25 * len(hsv):
+        return None
+    ang = np.deg2rad(sel[:, 0].astype(np.float32) * 2.0)
+    return round(float(np.rad2deg(np.arctan2(np.sin(ang).mean(), np.cos(ang).mean())) % 360), 1)
+
+
 def calibrate(video_path: str, n_samples: int = 40, hit_offset: int = 4):
     """Returns (Calibration, median keyboard frame, sample frames)."""
     frames, info = sample_frames(video_path, n_samples)
@@ -335,6 +347,7 @@ def calibrate(video_path: str, n_samples: int = 40, hit_offset: int = 4):
     cal = Calibration(**info, **kb)
     cal.hues = detect_hues(frames, cal, hit_offset)
     cal.key_hues = detect_key_hues(frames, cal, cal.hues)
+    cal.glow_hue = detect_glow_hue(med, cal)
     return cal, med, frames
 
 

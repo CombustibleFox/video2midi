@@ -14,6 +14,8 @@ WHITE_SAT_MAX = 60  # white-note class: keys lit white are barely saturated
 WHITE_LIFT = 35  # ...and brighter than the same key idle
 WHITE_BAR_VAL_MIN = 200
 KEY_VAL_WHITE = 100
+KEY_VAL_BLACK_GLOW = 125  # ...but for a color like the keyboard's own glow line, a dim black key is more likely a tint than a press
+GLOW_HUE_GAP = 30  # degrees
 KEY_VAL_BLACK = 110  # lit black keys can be dim (~140-155 on dark blue); idle ones sit below ~100
 ON_FRACTION = 0.6
 BAR_SAT_MIN, BAR_VAL_MIN = 40, 90  # falling bars can be paler than the lit keys
@@ -42,6 +44,11 @@ SEAM_PATH_CAP = 30  # ...but never more than this many frames (slow falls keep a
 SEAM_PATH_FRACTION = 0.4  # share of its fall through the clear zone a seam must be seen on
 SEAM_VOTE_FRACTION = 0.4  # ...and at least this share of what a typical, well-seen seam collects
 SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys: glow and flares live there
+
+
+def _hue_gap(a: float, b: float) -> float:
+    d = abs(a - b) % 360
+    return min(d, 360 - d)
 
 
 def _hue_tolerance(hues: list[float]) -> float:
@@ -126,6 +133,8 @@ class Plan:
     starts: np.ndarray
     area: np.ndarray
     val_min: np.ndarray  # per pixel
+    val_min_glow: np.ndarray  # per pixel, for note colors that match the keyboard's glow line (stricter on black keys)
+    glow_color: list[bool]  # per key-light color: does it look like the glow line?
     # intro/outro detection
     kb_y0: int
     ref_band: np.ndarray | None
@@ -153,9 +162,10 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
     bar_hues = [h / 2 if h >= 0 else -1.0 for h in bar_deg]
     tol = _hue_tolerance(key_deg)
     bar_tol = _hue_tolerance(bar_deg)
+    glow_color = [h >= 0 and cal.glow_hue is not None and _hue_gap(h * 2, cal.glow_hue) <= GLOW_HUE_GAP for h in hues]
     ref_hsv = cv2.cvtColor(ref[cal.top : cal.bottom + 1, cal.x0 : cal.x1 + 1], cv2.COLOR_BGR2HSV) if ref is not None else None
 
-    idx_parts, starts, area, vmin, idle = [], [], [], [], []
+    idx_parts, starts, area, vmin, vglow, idle = [], [], [], [], [], []
     pos = 0
     for p in pitches:
         xa, xb, ya, yb, blk = boxes[p]
@@ -166,6 +176,7 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
         n = (xb - xa) * (yb - ya)
         area.append(n)
         vmin.append(np.full(n, KEY_VAL_BLACK if blk else KEY_VAL_WHITE, np.int16))
+        vglow.append(np.full(n, KEY_VAL_BLACK_GLOW if blk else KEY_VAL_WHITE, np.int16))
         idle.append(ref_hsv[ya:yb, xa:xb, 2].ravel().astype(np.int16) if ref_hsv is not None else np.full(n, 150, np.int16))
         pos += n
 
@@ -199,7 +210,7 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
     ix = {k: np.searchsorted(bounds, v) for k, v in cols.items()}
     widths = {"core": cbn - ca, "bar": wb - wa, "side": (le - lw) + (re - rs), "lane": gb - ga}
     return Plan(pitches, black, hues, tol, bar_hues, bar_tol, np.concatenate(idle), cal.top, cal.bottom, cal.x0, cal.x1, kb_w,
-                np.concatenate(idx_parts), np.array(starts), np.array(area, float), np.concatenate(vmin),
+                np.concatenate(idx_parts), np.array(starts), np.array(area, float), np.concatenate(vmin), np.concatenate(vglow), glow_color,
                 kb_y0, ref_band, y_lo, y_hi, cut,
                 max(1, int(round(MIN_SEAM_ROWS_PER_PX * cal.height))), bounds, ix, widths, ga, gb,
                 [[] if h < 0 else _hue_intervals(h, bar_tol) for h in bar_hues])
@@ -244,14 +255,14 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
     px = cv2.cvtColor(bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)  # only the key boxes
     Hp = px[:, 0].astype(np.int16)
     fracs = []
-    for hc in plan.hues:
+    for ci, hc in enumerate(plan.hues):
         if hc < 0:  # white lights the key up relative to how it looks idle
             near = (px[:, 1] < WHITE_SAT_MAX) & (px[:, 2] > plan.ref_v + WHITE_LIFT)
             bright = np.ones_like(near)
         else:
             d = np.abs(Hp - hc)
             near = np.minimum(d, 180 - d) <= plan.tol
-            bright = (px[:, 1] >= KEY_SAT_MIN) & (px[:, 2] >= plan.val_min)
+            bright = (px[:, 1] >= KEY_SAT_MIN) & (px[:, 2] >= (plan.val_min_glow if plan.glow_color[ci] else plan.val_min))
         fracs.append(np.add.reduceat((bright & near).astype(np.int32), plan.starts) / plan.area)
     fr = np.stack(fracs)
     lab = np.where(fr.max(axis=0) > ON_FRACTION, fr.argmax(axis=0) + 1, 0).astype(np.uint8)
