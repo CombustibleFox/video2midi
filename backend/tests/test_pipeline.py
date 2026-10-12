@@ -142,3 +142,32 @@ def test_parallel_matches_serial(tmp_path):
     assert np.array_equal(serial.labels, parallel.labels)
     assert np.array_equal(serial.bottoms, parallel.bottoms)
     assert serial.seams == parallel.seams
+
+
+def test_dim_lit_black_keys_are_detected(tmp_path):
+    """Lit black keys can be dim in real videos (brightness ~130-150); they must still count as pressed."""
+    notes = [(61, 0.5, 1.2, "L"), (66, 1.5, 2.2, "R"), (58, 2.5, 3.2, "L"), (60, 0.5, 1.2, "R"), (64, 2.5, 3.2, "L")]
+    path = tmp_path / "dim.avi"
+    render_video(path, notes, speed=240.0, dim_black=True)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    assert sorted(n["pitch"] for n in res["notes"]) == [58, 60, 61, 64, 66]
+
+
+def test_dark_line_seams_split_white_key_repeats(tmp_path):
+    """At low resolution the seam between touching bars is a thin dark line, not a gap in the color."""
+    notes = []
+    t = 0.5
+    for p, hand in ((60, "R"), (48, "L"), (64, "R")):
+        for _ in range(3):
+            notes.append((p, t, t + 0.3, hand))
+            t += 0.3
+        t += 0.6
+    path = tmp_path / "dark.avi"
+    render_video(path, notes, speed=240.0, dark_seam=True)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    got = sorted((n["pitch"], round(n["start"], 1)) for n in res["notes"])
+    assert got == sorted((p, round(a - 0.5, 1)) for p, a, b, h in notes)

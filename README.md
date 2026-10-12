@@ -56,3 +56,7 @@ ffmpeg is only needed if a downloaded video can't be decoded directly; install i
 ## Performance
 
 Frame analysis runs in parallel: the video is cut into chunks and a pool of worker processes (one per CPU core, up to 8) analyses them, then the results are stitched back together in order. The output is identical to the single-process result. Use `--workers N` on the CLI (`--workers 1` to disable) or the `workers` setting in the API. On a 4-core machine a 3.7 minute 1686x948 video takes about 40 seconds.
+
+## Video quality
+
+Detection works best on 720p or 1080p downloads. At 360p the keys are only a few pixels wide and the seam between two back-to-back notes of the same pitch can shrink to one pixel, so some repeated black-key notes get merged. Everything else (pitches, hands, timing) still works at 360p.

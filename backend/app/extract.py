@@ -11,10 +11,11 @@ from .settings import Settings
 
 KEY_SAT_MIN = 80
 KEY_VAL_WHITE = 100
-KEY_VAL_BLACK = 150
+KEY_VAL_BLACK = 110  # lit black keys can be dim (~140-155 on dark blue); idle ones sit below ~100
 ON_FRACTION = 0.6
 BAR_SAT_MIN, BAR_VAL_MIN = 40, 90  # falling bars can be paler than the lit keys
 LABEL_SAT_MAX, LABEL_VAL_MIN = 62, 150  # light, desaturated pixels: note-name labels (gray-white on dark bars)
+DARK_LINE_RATIO, DARK_LINE_MIN_LEVEL = 0.72, 130  # a seam row is this much dimmer than the bar around it
 MAX_SEAM_GAP = 25  # px; wider gaps are real rests that the key signal already shows
 MIN_SEAM_VOTES = 3  # frames that must agree on a seam
 SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys: glow and flares live there
@@ -104,6 +105,8 @@ class Plan:
     bounds: np.ndarray  # sorted distinct column edges used for horizontal sums
     ix: dict[str, np.ndarray]  # name -> index of each key's boundary within `bounds`
     widths: dict[str, np.ndarray]
+    lane_a: np.ndarray  # lane column span per key, region coordinates
+    lane_b: np.ndarray
     bar_ranges: list[list[tuple[int, int]]]  # per hue: hue intervals
 
 
@@ -156,7 +159,7 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
     widths = {"bar": wb - wa, "side": (le - lw) + (re - rs), "lane": gb - ga}
     return Plan(pitches, black, hues, tol, cal.top, cal.bottom, cal.x0, cal.x1, kb_w,
                 np.concatenate(idx_parts), np.array(starts), np.array(area, float), np.concatenate(vmin),
-                kb_y0, ref_band, y_lo, y_hi, cut, bounds, ix, widths,
+                kb_y0, ref_band, y_lo, y_hi, cut, bounds, ix, widths, ga, gb,
                 [_hue_intervals(h, tol) for h in hues])
 
 
@@ -236,6 +239,21 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
     # keys only): the rounded corners of two touching bars dent both edges while the middle stays solid.
     lo_rows = ((lane < 0.12) & (lane_white < 0.03)) | (~plan.black & (side < 0.5))
     hi_rows = (lane > 0.5) & (plan.black | (side > 0.7))
+    # Low-resolution videos blur the gap between bars into a thin dark line that is still bar-colored.
+    # It darkens the whole lane width, so even the brightest pixel in the row drops; a printed label
+    # only darkens part of the row and leaves bright bar pixels beside it.
+    value = reg[:cut, :, 2]
+    lane_max = np.stack([value[:, a:b].max(axis=1) for a, b in zip(plan.lane_a, plan.lane_b)], axis=1).astype(np.int16)
+    pad = np.zeros((5, lane_max.shape[1]), np.int16)
+    padded = np.vstack([pad, lane_max, pad])
+    n = lane_max.shape[0]
+    above = np.maximum.reduce([padded[5 - d : 5 - d + n] for d in (2, 3)])
+    below = np.maximum.reduce([padded[5 + d : 5 + d + n] for d in (2, 3)])
+    level = np.minimum(above, below)
+    # white keys only: black keys' dark narrow bars carry labels brighter than the bar itself
+    dark_line = ~plan.black & (lane > 0.5) & (level >= DARK_LINE_MIN_LEVEL) & (lane_max < DARK_LINE_RATIO * level)
+    lo_rows = lo_rows | dark_line
+    hi_rows = hi_rows & ~dark_line
     seams = _seams_in_frame(hi_rows, lo_rows, idx, plan.y_lo)
     return lab, bot, seams
 
