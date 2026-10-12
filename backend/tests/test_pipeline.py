@@ -248,3 +248,27 @@ def test_real_rest_between_repeats_is_kept(tmp_path):
     gaps = _gaps_between_repeats(res)
     assert len(res["notes"]) == 9
     assert min(g for g in gaps if g < 1.0) > 0.2, gaps
+
+
+def test_hand_change_on_the_same_key_has_no_rest_and_no_late_start(tmp_path):
+    """One hand's note followed straight away by the other hand's on the same key. The key light drops out
+    in between, but the notes touch: no rest, and the second note starts when its bar arrives."""
+    notes = [(40, 0.3, 0.9, "L"), (43, 1.0, 1.6, "L"), (72, 0.6, 1.2, "R"), (76, 1.4, 2.0, "R")]
+    t = 2.6
+    true_second_start = {}
+    for p, first, second in ((60, "L", "R"), (62, "R", "L"), (64, "L", "R")):
+        notes.append((p, t, t + 0.3, first))
+        notes.append((p, t + 0.3, t + 0.6, second))
+        true_second_start[p] = t + 0.3
+        t += 1.0
+    path = tmp_path / "handover.avi"
+    render_video(path, notes, speed=240.0, seam_px=6, key_dark_s=0.05)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    t0 = min(n[1] for n in notes)  # the output starts at the first note
+    for p, truth in true_second_start.items():
+        pair = sorted((n for n in res["notes"] if n["pitch"] == p), key=lambda n: n["start"])
+        assert len(pair) == 2 and pair[0]["hand"] != pair[1]["hand"], pair
+        assert pair[1]["start"] - pair[0]["end"] < 0.03, pair  # no invented rest
+        assert abs(pair[1]["start"] - (truth - t0)) < 0.04, (pair, truth - t0)  # not delayed

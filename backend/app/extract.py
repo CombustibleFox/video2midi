@@ -448,20 +448,28 @@ def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, fl
                 merged[-1][2] = r[2]
             else:
                 merged.append(list(r))
-        # Some videos switch the key light off for a couple of frames between touching repeats. When the
-        # bars show a seam there, the notes touch: join the runs and let the seam decide where they split.
-        # A real rest leaves no seam and is kept.
+        # Some videos switch the key light off for a couple of frames between touching notes (a repeat, or
+        # the other hand taking over the same key). When the bars show a seam there, the notes touch: the
+        # first ends and the second starts at the seam. A real rest leaves no seam and is kept.
         seams_k = sorted(splits.get(k, []))
         dropped: set[int] = set()  # extra seam clusters around a bridged gap: cut at one seam only
-        joined: list[list[int]] = []
+        joined: list[list] = []
         for i, r in enumerate(merged):
             near = [j for j, (e, _) in enumerate(seams_k) if r[1] - 3 <= e - first_frame <= r[2] + 3]
-            if (r[0] == 0 and joined and joined[-1][0] != 0 and i + 1 < len(merged)
-                    and merged[i + 1][0] == joined[-1][0] and r[2] - r[1] <= MAX_BRIDGE_FRAMES and near):
+            if (r[0] == 0 and joined and joined[-1][0] != 0 and i + 1 < len(merged) and merged[i + 1][0] != 0
+                    and r[2] - r[1] <= MAX_BRIDGE_FRAMES and near):
                 centre = (r[1] + r[2]) / 2
                 best = min(near, key=lambda j: abs(seams_k[j][0] - first_frame - centre))
                 dropped.update(j for j in near if j != best)
-                joined[-1][2] = r[2]
+                if merged[i + 1][0] == joined[-1][0]:  # same hand again: one run, split at the seam below
+                    joined[-1][2] = r[2]
+                else:  # the other hand: hand over exactly at the seam
+                    e = seams_k[best][0] - first_frame
+                    nxt = merged[i + 1]
+                    e = min(max(e, joined[-1][1] + 1), nxt[2] - 1)
+                    joined[-1][2] = e
+                    nxt[1] = e
+                    dropped.add(best)
                 continue
             if joined and joined[-1][0] == r[0] and joined[-1][2] == r[1]:
                 joined[-1][2] = r[2]

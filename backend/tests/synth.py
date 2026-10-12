@@ -23,12 +23,17 @@ def layout(first_midi, n_white, width):
 
 
 def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, kb_h=120,
-                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0):
+                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False, dim_black=False, dark_seam=False, outline_rows=0, key_gap_s=0.0, key_dark_s=0.0):
     """notes: list of (pitch, on, off, 'R'|'L'). Notes start after intro_s."""
     keys = layout(first_midi, n_white, w)
+    lit_window = {}
     kb_y = h - kb_h
     notes = [(p, a + intro_s, b + intro_s, hand) for p, a, b, hand in notes]
     end = max(b for _, _, b, _ in notes) + tail_s
+    for i, (p, a, b, hand) in enumerate(notes):  # key light drops out where the same key is struck again at once
+        touch_prev = any(q == p and abs(b2 - a) < 1e-6 for q, a2, b2, _ in notes)
+        touch_next = any(q == p and abs(a2 - b) < 1e-6 for q, a2, b2, _ in notes)
+        lit_window[i] = (a + (key_dark_s if touch_prev else 0.0), b - (key_dark_s if touch_next else 0.0))
     vw = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), fps, (w, h))
     assert vw.isOpened()
     ww = w / n_white
@@ -42,16 +47,18 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
         img[kb_y:] = 240
         for i in range(1, n_white):
             img[kb_y:, int(i * ww)] = 70
-        for p, a, b, hand in notes:  # lit white keys go under the black keys
+        for i, (p, a, b, hand) in enumerate(notes):  # lit white keys go under the black keys
             xc, kw, black = keys[p]
-            if not black and a <= t < b - key_gap_s:
+            la, lb = lit_window[i]
+            if not black and la <= t < lb - key_gap_s:
                 col = RIGHT_BGR if hand == "R" else LEFT_BGR
                 img[kb_y + 2 : h - 2, int(xc - kw / 2) : int(xc + kw / 2)] = col
         for p, (xc, kw, black) in keys.items():
             if black:  # idle black keys have a faint blue sheen like real videos
                 img[kb_y : kb_y + int(0.6 * kb_h), int(xc - kw / 2) : int(xc + kw / 2)] = (60, 30, 25)
-        for p, a, b, hand in notes:
+        for i, (p, a, b, hand) in enumerate(notes):
             xc, kw, black = keys[p]
+            la, lb = lit_window[i]
             col = RIGHT_BGR if hand == "R" else LEFT_BGR
             if black and dim_black:  # lit black keys can be dim in real videos (V ~ 130-150)
                 col = tuple(int(c * 0.62) for c in col)
@@ -69,7 +76,7 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
                     if outline_rows and black:  # dark, saturated outline line across the whole narrow lane, above the label
                         img[cy - 10 : cy - 10 + outline_rows, x0:x1] = tuple(int(c * 0.3) for c in col)
                     img[cy - 5 : cy + 5, lx0:lx1] = (165, 165, 165)  # light gray like the real labels
-            if black and a <= t < b - key_gap_s:
+            if black and la <= t < lb - key_gap_s:
                 img[kb_y : kb_y + int(0.6 * kb_h), x0:x1] = col
         if glow:  # sparks and glow where the notes land, like real videos
             rng = np.random.default_rng(f)
