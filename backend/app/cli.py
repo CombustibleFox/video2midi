@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from .calibrate import Calibration
-from .download import download_youtube, ensure_readable
+from .download import download_youtube, ensure_readable, safe_filename
 from .pipeline import run_calibration, run_extraction
 from .settings import Settings
 
@@ -14,7 +14,7 @@ from .settings import Settings
 def main() -> None:
     ap = argparse.ArgumentParser(description="Convert a Synthesia-style video to a 2-track MIDI file")
     ap.add_argument("source", help="YouTube URL or video file")
-    ap.add_argument("-o", "--output", default="output.mid")
+    ap.add_argument("-o", "--output", help="output file (default: <video name>.mid in the current folder)")
     ap.add_argument("--workdir", help="keep intermediate files here (preview.png, notes.json, ...)")
     ap.add_argument("--cookies-from-browser", metavar="BROWSER", help="e.g. chrome, firefox")
     ap.add_argument("--quantize", default="1/32", help="1/4, 1/8, 1/16, 1/32 or off")
@@ -32,11 +32,16 @@ def main() -> None:
     s = Settings.from_dict({"quantize": a.quantize, "tempo_override": a.tempo, "split_pitch": a.split,
                             "start_s": a.start, "end_s": a.end, "workers": a.workers})
     if a.source.startswith(("http://", "https://")):
+        titles: list[str] = []
         video = download_youtube(a.source, work, lambda st, f, m: print(f"\r{m} {f:4.0%}", end=""),
-                                 a.cookies_from_browser)
+                                 a.cookies_from_browser, titles.append)
         print()
+        stem = safe_filename(titles[0] if titles else None)
     else:
         video = Path(a.source)
+        stem = safe_filename(video.stem)
+    if not a.output:
+        a.output = f"{stem}.mid"
     video = ensure_readable(video)
     cal = run_calibration(video, work, s)
     if a.first_midi is not None:

@@ -28,6 +28,7 @@ export default function ResultView({ jobId, themeId, onAdjust, onReset }: Props)
     getResult(jobId).then(setRes).catch((e) => setError(e.message));
   }, [jobId]);
 
+  const stem = res?.file_stem || "output";
   const tempos = res?.tempo_map?.map((t) => Math.round(t.bpm)) ?? [];
   const changes = tempos.length > 1;
   const tempoLabel = changes ? `${Math.min(...tempos)}–${Math.max(...tempos)}` : String(res?.bpm ?? "");
@@ -107,6 +108,7 @@ export default function ResultView({ jobId, themeId, onAdjust, onReset }: Props)
   return (
     <div className="card result">
       <h2>Your MIDI is ready 🎉</h2>
+      {res.title && <p className="muted small" title="Downloads are named after the video">{res.title}</p>}
 
       <ul className="stats">
         <li><b>{res.notes.length}</b><span>notes</span></li>
@@ -117,10 +119,10 @@ export default function ResultView({ jobId, themeId, onAdjust, onReset }: Props)
       </ul>
 
       <div className="downloads">
-        <a className="button primary big" href={midiUrl(jobId)} download="output.mid">⬇ Download MIDI</a>
+        <a className="button primary big" href={midiUrl(jobId)} download={`${stem}.mid`}>⬇ Download MIDI</a>
         <span className="muted small">Both hands on separate tracks. Or just one:</span>
-        <a className="button" href={midiUrl(jobId, "R")} download="right_hand.mid">Right hand only</a>
-        <a className="button" href={midiUrl(jobId, "L")} download="left_hand.mid">Left hand only</a>
+        <a className="button" href={midiUrl(jobId, "R")} download={`${stem} (right hand).mid`}>Right hand only</a>
+        <a className="button" href={midiUrl(jobId, "L")} download={`${stem} (left hand).mid`}>Left hand only</a>
       </div>
 
       {res.notes.length > 0 ? (

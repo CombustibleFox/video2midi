@@ -58,6 +58,8 @@ export interface NoteOut {
 }
 
 export interface Result {
+  title?: string | null;
+  file_stem?: string; // the video's name as a safe file name
   bpm: number;
   tempo_map?: { time: number; beat: number; bpm: number }[];
   video_offset: number; // video time of the first note: video time = piano-roll time + this

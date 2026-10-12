@@ -28,6 +28,7 @@ class Job:
     message: str = ""
     error: str | None = None
     video: Path | None = None
+    title: str | None = None  # the video's name (YouTube title or uploaded file name), used to name downloads
     calibration: Calibration | None = None
     version: int = 0
     created: float = field(default_factory=time.time)
@@ -46,8 +47,14 @@ class Job:
                 self.error = error
             self.version += 1
 
+    @property
+    def file_stem(self) -> str:
+        from .download import safe_filename
+
+        return safe_filename(self.title)
+
     def snapshot(self) -> dict:
-        return {"id": self.id, "status": self.status, "progress": self.progress, "message": self.message,
+        return {"id": self.id, "title": self.title, "status": self.status, "progress": self.progress, "message": self.message,
                 "error": self.error, "version": self.version}
 
 
@@ -89,7 +96,7 @@ class JobManager:
         try:
             if job.url:
                 job.update(status="downloading", progress=0.0, message="Downloading video")
-                job.video = download_youtube(job.url, job.dir, self._progress(job))
+                job.video = download_youtube(job.url, job.dir, self._progress(job), on_title=lambda t: setattr(job, "title", t))
             job.update(status="calibrating", progress=0.0, message="Preparing video")
             job.video = ensure_readable(job.video)
             job.calibration = run_calibration(job.video, job.dir, job.settings, self._progress(job))

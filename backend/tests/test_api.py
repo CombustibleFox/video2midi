@@ -147,3 +147,24 @@ def test_download_one_hand_only(tmp_path, monkeypatch):
     assert count("L") == [0, 5]
     assert sum(count("both")) == 10
     assert c.get(f"/jobs/{jid}/midi", params={"hand": "X"}).status_code == 422
+
+
+def test_downloads_are_named_after_the_video(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "manager", JobManager(tmp_path / "jobs"))
+    video = tmp_path / "v.avi"
+    render_video(video, [(60 + i, i * 0.5, i * 0.5 + 0.4, "R") for i in range(3)] +
+                 [(40 + i, i * 0.5, i * 0.5 + 0.4, "L") for i in range(3)])
+    c = TestClient(main.app)
+    with open(video, "rb") as f:
+        jid = c.post("/jobs", files={"file": ("Suzume: Main Theme?.avi", f, "video/x-msvideo")},
+                     data={"settings": '{"quantize":"off"}'}).json()["id"]
+    wait(c, jid, {"awaiting_confirmation"})
+    c.post(f"/jobs/{jid}/process", json={})
+    wait(c, jid, {"done"})
+    res = c.get(f"/jobs/{jid}/notes").json()
+    assert res["title"] == "Suzume: Main Theme?" and res["file_stem"] == "Suzume Main Theme"
+    from urllib.parse import unquote
+
+    assert "Suzume Main Theme.mid" in unquote(c.get(f"/jobs/{jid}/midi").headers["content-disposition"])
+    right = unquote(c.get(f"/jobs/{jid}/midi", params={"hand": "R"}).headers["content-disposition"])
+    assert "Suzume Main Theme (right hand).mid" in right

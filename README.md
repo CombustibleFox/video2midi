@@ -69,6 +69,10 @@ Detection works best on 720p or 1080p downloads. At 360p the keys are only a few
 
 Videos with glow, particle fountains and glossy semi-transparent bars work: notes are read from the lit keys, not the bars, and bar seams are only trusted when they are seen on many frames, so sparks and bloom near the keys don't split long notes. A second hand that plays very little is still found. Where sparks and glow keep a key lit after its bar has ended, the note ends where the bar's length says it does (only when the bar can be measured cleanly while it falls, and only to shorten).
 
+Downloaded MIDI files are named after the video (the YouTube title, or the uploaded file's name), e.g. `Suzume no Tojimari - Main Theme.mid` and `... (right hand).mid`. The command line does the same when you leave out `-o`.
+
+Videos over a busy animated background are handled too: seam look-alikes in the scenery are ignored when there are far more of them than notes, and a one-frame dropout of a key light is treated as a real release (two touching notes) when the bar passing the key thins out at that moment, rather than as detection flicker.
+
 ## Sharing a problem spot
 
 On the detection step and on the result page there is a **Save a clip or frame of the original video** box. Enter a video time (or, on the result page, move the piano-roll playhead and press **Use playhead**) and download a clip of up to 60 seconds (`.mp4`, no audio) or a full-resolution frame (`.png`). Clips use ffmpeg when it is installed and fall back to OpenCV otherwise. The piano roll starts at the first note, so the result page shows the offset to convert piano-roll time to video time.

@@ -50,6 +50,7 @@ async def create_job(request: Request):
             raise HTTPException(422, "missing file")
         settings = _settings(json.loads(form.get("settings") or "{}"))
         job = manager.create(settings)
+        job.title = Path(upload.filename or "").stem or None
         dest = job.dir / ("source" + (Path(upload.filename or "").suffix.lower()[:8] or ".mp4"))
         size = 0
         with open(dest, "wb") as f:
@@ -189,7 +190,10 @@ def notes(jid: str):
     p = job.dir / "notes.json"
     if job.status != "done" or not p.exists():
         raise HTTPException(409, "result not ready")
-    return Response(p.read_bytes(), media_type="application/json")
+    data = json.loads(p.read_text())
+    data["title"] = job.title
+    data["file_stem"] = job.file_stem
+    return Response(json.dumps(data), media_type="application/json")
 
 
 @app.get("/jobs/{jid}/midi")
@@ -202,12 +206,12 @@ def midi(jid: str, hand: str = "both"):
     if hand not in ("both", "R", "L"):
         raise HTTPException(422, "hand must be both, R or L")
     if hand == "both":
-        return FileResponse(p, media_type="audio/midi", filename="output.mid")
+        return FileResponse(p, media_type="audio/midi", filename=f"{job.file_stem}.mid")
     result = json.loads((job.dir / "notes.json").read_text())
     notes = [Note(**n) for n in result["notes"] if n["hand"] == hand]
     out = job.dir / f"output_{hand}.mid"
     write_midi(notes, TempoMap.from_list(result["tempo_map"]) if result.get("tempo_map") else result["bpm"], str(out), job.settings.velocity)
-    return FileResponse(out, media_type="audio/midi", filename=f"output_{'right' if hand == 'R' else 'left'}_hand.mid")
+    return FileResponse(out, media_type="audio/midi", filename=f"{job.file_stem} ({'right' if hand == 'R' else 'left'} hand).mid")
 
 
 # Serve the built frontend (npm run build in frontend/) from the same port.

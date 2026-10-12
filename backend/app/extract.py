@@ -27,8 +27,14 @@ MIN_OVERSHOOT_FRAMES = 4  # a key staying lit this much longer than its bar is g
 OVERSHOOT_FRACTION = 0.25
 BAR_EXTENT_VAL = 100  # brightness that separates a bar from the dark background
 BAR_TOP_CLEAR_ROWS = 14
+BAND_ROWS = 40  # rows above the keys checked for a passing bar
+BAND_LOOKBACK = 14  # frames before a dropout that show what the bar was doing
+BRIDGE_CONTINUITY_DROP = 12  # percentage points the bar must thin out by for a dropout to count as a release
 MIN_BAR_ROWS = 8
 HOLE_ROWS = 4  # mask holes up to this tall inside a bar are closed
+NOISY_SEAMS_PER_NOTE = 5  # more seam candidates per note than this means the background is full of look-alikes
+SEAM_PATH_CAP = 30  # ...but never more than this many frames (slow falls keep a seam in view for hundreds)
+SEAM_PATH_FRACTION = 0.4  # share of its fall through the clear zone a seam must be seen on
 SEAM_VOTE_FRACTION = 0.4  # ...and at least this share of what a typical, well-seen seam collects
 SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys: glow and flares live there
 
@@ -54,6 +60,7 @@ class Labels:
     seam_rows: tuple[int, int]  # absolute pixel rows (y_lo, y_hi) searched above the keyboard
     tops: np.ndarray | None = None  # (frames, keys): top row of the lowest bar, -1 if unknown or cut off
     clean_row: int = 0  # bars whose lower edge is above this row are clear of glow and sparks
+    strength: np.ndarray | None = None  # (frames, keys): percent of the lane just above the key that is bar-bright
     edge_bottoms: np.ndarray | None = None  # (frames, keys): lower edge of the same lit run that `tops` starts
 
 
@@ -224,9 +231,9 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
         band = frame[plan.kb_y0 : plan.bottom + 1 : 2, plan.x0 : plan.x1 + 1 : 2]
         # lit keys are a small part of the band; an intro/outro screen differs almost everywhere
         if np.count_nonzero(cv2.absdiff(band, plan.ref_band).max(axis=2) < 60) <= 0.5 * band.shape[0] * band.shape[1]:
-            return lab, bot, seams, (bot.copy(), bot.copy())
+            return lab, bot, seams, (bot.copy(), bot.copy(), np.zeros(K, np.uint8))
     if not plan.hues:
-        return lab, bot, seams, (bot.copy(), bot.copy())
+        return lab, bot, seams, (bot.copy(), bot.copy(), np.zeros(K, np.uint8))
 
     bgr = frame[plan.top : plan.bottom + 1, plan.x0 : plan.x1 + 1].reshape(-1, 3)[plan.flat_idx]
     px = cv2.cvtColor(bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)  # only the key boxes
@@ -308,8 +315,14 @@ def analyse_frame(plan: Plan, frame: np.ndarray, idx: int):
     dark_line = ~plan.black & (lane > 0.5) & (level >= DARK_LINE_MIN_LEVEL) & (lane_max < DARK_LINE_RATIO * level)
     lo_rows = lo_rows | dark_line
     hi_rows = hi_rows & ~dark_line
+    # Is a bar passing the keys right now? A bar leaves a bright lane just above the key; the gap between two
+    # bars (a real release) leaves rows that are dim. A detection flicker doesn't change the bar.
+    nb = plan.y_hi - plan.y_lo
+    near_keys = reg[max(0, nb - BAND_ROWS) : nb, :, 2]
+    band_max = np.stack([near_keys[:, a:b].max(axis=1) for a, b in zip(plan.lane_a, plan.lane_b)], axis=1)
+    continuity = np.round(100 * (band_max >= DARK_LINE_MIN_LEVEL).mean(axis=0)).astype(np.uint8)
     seams = _seams_in_frame(hi_rows, lo_rows, idx, plan.y_lo, plan.min_seam_rows)
-    return lab, bot, seams, (top, edge_bot)
+    return lab, bot, seams, (top, edge_bot, continuity)
 
 
 def _open_at(video_path: str, frame: int) -> cv2.VideoCapture:
@@ -334,7 +347,7 @@ def _analyse_range(video_path: str, plan: Plan, a: int, b: int, on_frame=None):
             break
         lab, bot, sm, top = analyse_frame(plan, frame, idx)
         labs.append(lab)
-        bots.append(np.stack([bot, top[0], top[1]]))
+        bots.append(np.stack([bot, top[0], top[1], top[2].astype(np.int16)]))
         seams.extend(sm)
         if on_frame:
             on_frame(idx)
@@ -423,7 +436,7 @@ def label_frames(video_path: str, cal: Calibration, s: Settings, ref: np.ndarray
         return Labels(empty, plan.pitches, fps, first, empty.astype(np.int16), {}, (plan.y_lo, plan.y_hi))
     bt = np.stack(rows_bot)
     return Labels(np.stack(rows_lab), plan.pitches, fps, first, bt[:, 0], seams, (plan.y_lo, plan.y_hi), bt[:, 1],
-                  plan.y_lo + plan.cut, bt[:, 2])
+                  plan.y_lo + plan.cut, bt[:, 3].astype(np.uint8), bt[:, 2])
 
 
 def _runs(seq: np.ndarray) -> list[list[int]]:
@@ -484,6 +497,11 @@ def seam_splits(L: Labels, fall: tuple[float, float]) -> dict[int, list[tuple[fl
     floor = MIN_SEAM_VOTES
     if len(strong) >= 5:
         floor = max(floor, int(SEAM_VOTE_FRACTION * np.median(strong)))
+    # Busy backgrounds and glow can produce far more seam look-alikes than there are notes. Then only trust
+    # seams that were in view for a good share of the bars' way down the clear part of the screen.
+    onsets = int(((L.labels[1:] > 0) & (L.labels[:-1] == 0)).sum()) + int((L.labels[:1] > 0).sum())
+    if L.clean_row and len(cands) > NOISY_SEAMS_PER_NOTE * max(onsets, 1):
+        floor = max(floor, min(SEAM_PATH_CAP, int(SEAM_PATH_FRACTION * (L.clean_row - L.seam_rows[0]) / spf)))
     out: dict[int, list[tuple[float, float]]] = {}
     for k, g in cands:
         if len(g) >= floor:
@@ -520,6 +538,17 @@ def bar_length_frames(L: Labels, k: int, start: int, fall: tuple[float, float]) 
     return float(np.median(agree)) / spf
 
 
+def _bar_gap_at(L: Labels, k: int, a: int, b: int) -> bool:
+    """True when the bar passing the key thins out during frames a..b, i.e. the gap between two bars arrives and
+    the key light going out is real. A detection flicker leaves the bar as it was."""
+    if L.strength is None or b <= a:
+        return False
+    before = L.strength[max(0, a - BAND_LOOKBACK) : a, k]
+    if not len(before):
+        return False
+    return int(before.max()) - int(L.strength[a:b, k].min()) >= BRIDGE_CONTINUITY_DROP
+
+
 def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, float, float, int]]:
     """Debounce each key's on/off signal. Returns (pitch, start_s, end_s, color_index)."""
     labels, pitches, fps, first_frame = L.labels, L.pitches, L.fps, L.first
@@ -532,7 +561,8 @@ def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, fl
         merged: list[list[int]] = []
         for i, r in enumerate(runs):
             if (r[0] == 0 and merged and merged[-1][0] != 0 and i + 1 < len(runs)
-                    and runs[i + 1][0] == merged[-1][0] and r[2] - r[1] <= s.gap_fill_frames):
+                    and runs[i + 1][0] == merged[-1][0] and r[2] - r[1] <= s.gap_fill_frames
+                    and not _bar_gap_at(L, k, r[1], r[2])):
                 merged[-1][2] = r[2]  # bridge the dropout; the next run is absorbed below
                 continue
             if merged and merged[-1][0] == r[0] and merged[-1][2] == r[1]:

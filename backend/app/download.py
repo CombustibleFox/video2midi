@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,8 +9,16 @@ import cv2
 Progress = Callable[[str, float, str], None]
 
 
+def safe_filename(name: str | None, default: str = "output") -> str:
+    """A video title as a file name: no path or reserved characters, no trailing dots, not absurdly long."""
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", name or "")
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    return name[:120].rstrip(" .") or default
+
+
 def download_youtube(url: str, out_dir: Path, progress: Progress | None = None,
-                     cookies_from_browser: str | None = None) -> Path:
+                     cookies_from_browser: str | None = None,
+                     on_title: Callable[[str], None] | None = None) -> Path:
     import yt_dlp
 
     def hook(d: dict) -> None:
@@ -30,7 +39,9 @@ def download_youtube(url: str, out_dir: Path, progress: Progress | None = None,
     if cookies_from_browser:  # e.g. "chrome" or "firefox"; helps when YouTube asks to confirm you're not a bot
         opts["cookiesfrombrowser"] = (cookies_from_browser,)
     with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+        info = ydl.extract_info(url, download=True)
+        if on_title and isinstance(info, dict) and info.get("title"):
+            on_title(str(info["title"]))
     files = sorted(p for p in out_dir.glob("source.*") if p.suffix not in (".part", ".ytdl"))
     if not files:
         raise RuntimeError("download produced no file")

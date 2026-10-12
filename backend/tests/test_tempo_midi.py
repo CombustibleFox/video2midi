@@ -102,3 +102,11 @@ def test_exact_timing_keeps_note_times_and_follows_tempo_changes(tmp_path):
     assert sorted(ons) == sorted(round(n.start, 2) for n in notes) or max(abs(a - b) for a, b in zip(sorted(ons), sorted(n.start for n in notes))) < 0.005
     _, tm1, _ = build_result(raw, Settings(quantize="off", variable_tempo=False))
     assert len(tm1.bpms) == 1
+
+
+def test_safe_filename():
+    from app.download import safe_filename
+
+    assert safe_filename('A/B: C*?"<>|') == "A B C"
+    assert safe_filename("  ..  ") == "output" and safe_filename(None) == "output"
+    assert len(safe_filename("x" * 400)) <= 120
