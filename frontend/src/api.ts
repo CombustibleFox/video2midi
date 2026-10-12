@@ -12,7 +12,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  quantize: "1/16",
+  quantize: "1/32",
   tempo_override: null,
   split_pitch: 60,
   min_note_s: 0.05,

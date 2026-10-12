@@ -17,7 +17,7 @@ def main() -> None:
     ap.add_argument("-o", "--output", default="output.mid")
     ap.add_argument("--workdir", help="keep intermediate files here (preview.png, notes.json, ...)")
     ap.add_argument("--cookies-from-browser", metavar="BROWSER", help="e.g. chrome, firefox")
-    ap.add_argument("--quantize", default="1/16", help="1/4, 1/8, 1/16, 1/32 or off")
+    ap.add_argument("--quantize", default="1/32", help="1/4, 1/8, 1/16, 1/32 or off")
     ap.add_argument("--tempo", type=float, help="override detected BPM")
     ap.add_argument("--split", type=int, default=60, help="fallback hand split pitch")
     ap.add_argument("--start", type=float, default=0.0, help="start second")
