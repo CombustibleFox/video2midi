@@ -162,7 +162,12 @@ def midi(jid: str):
 
 
 # Serve the built frontend (npm run build in frontend/) from the same port.
-_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+import sys
+
+if getattr(sys, "frozen", False):  # PyInstaller bundle
+    _dist = Path(sys._MEIPASS) / "frontend_dist"
+else:
+    _dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if _dist.is_dir():
     from fastapi.staticfiles import StaticFiles
 

@@ -38,3 +38,17 @@ cd backend && uvicorn app.main:app --port 8000
 
 For frontend development run `npm run dev` in `frontend/` (http://localhost:5173, proxies API calls to :8000).
 Flow: paste a YouTube URL or upload a file, check/adjust the detected keyboard and colors, convert, preview in the piano roll with playback, then download the `.mid`.
+
+## Standalone executable
+
+PyInstaller bundles Python, the backend and the built UI into one file (build it on each target OS):
+
+```
+cd frontend && npm install && npm run build && cd ../backend
+pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm video2midi.spec     # -> backend/dist/video2midi(.exe)
+```
+
+Run it: it starts the server and opens http://127.0.0.1:8000 in your browser. The GitHub Actions workflow
+`Build executables` (Actions tab, Run workflow) builds Windows, macOS and Linux versions as downloadable artifacts.
+ffmpeg is only needed if a downloaded video can't be decoded directly; install it and put it on the PATH.
