@@ -9,7 +9,7 @@ Convert a YouTube video of a Synthesia-style piano tutorial (falling notes over 
 | Form | Local web app (runs on the user's machine) |
 | Backend | Python, FastAPI; yt-dlp, OpenCV, NumPy, mido |
 | Frontend | React + Vite (TypeScript) |
-| Input | YouTube URL (server downloads via yt-dlp) |
+| Input | YouTube URL (server downloads via yt-dlp) or uploaded video file (fallback when downloads are blocked) |
 | Video support | Standard falling-note view, plus cropped/partial keyboards, intro/outro and watermark overlays |
 | Hand split | By note color (two dominant falling-note colors); fallback to pitch split at a configurable key (default middle C / MIDI 60) if only one color is found |
 | Output | One Type 1 MIDI file, two tracks: "Right Hand", "Left Hand" |
@@ -18,7 +18,7 @@ Convert a YouTube video of a Synthesia-style piano tutorial (falling notes over 
 
 ## Pipeline
 
-1. **Download** — yt-dlp fetches the best video-only stream ≤1080p to a temp dir. Progress is reported.
+1. **Acquire** — an uploaded file is used directly; otherwise yt-dlp fetches the best video-only stream ≤1080p to a temp dir. Progress is reported.
 2. **Calibrate** — sample frames to find:
    - the keyboard region and key range (auto-detect white/black key pattern; handle partial keyboards by mapping visible keys to MIDI pitches, with a manual start-key override),
    - the *hit line* (top edge of the keyboard, where notes land),
@@ -32,7 +32,7 @@ Convert a YouTube video of a Synthesia-style piano tutorial (falling notes over 
 ## Web app
 
 - **Backend API (FastAPI)**
-  - `POST /jobs` `{url, settings}` → job id
+  - `POST /jobs` `{url, settings}` or multipart file upload + settings → job id
   - `GET /jobs/{id}` → status, stage, progress %, errors
   - `GET /jobs/{id}/events` → SSE progress stream
   - `GET /jobs/{id}/calibration` → preview image + detected params (editable)
@@ -41,7 +41,7 @@ Convert a YouTube video of a Synthesia-style piano tutorial (falling notes over 
   - `GET /jobs/{id}/midi` → download `.mid`
   - Jobs run in a background worker; state kept on disk in a temp workspace; cleaned up on request/expiry.
 - **Frontend (React + Vite)**
-  1. URL input + settings panel
+  1. URL input or file upload + settings panel
   2. Progress bar with stage labels (download → calibrate)
   3. Calibration preview with editable keyboard box, hit line, first key, hand colors → Confirm
   4. Progress bar (extract → quantize → export)
@@ -73,11 +73,14 @@ SPEC.md
 - Personal/local use; no auth, no deployment, no multi-user queue.
 - Requires Python 3.11+, Node 20+, and ffmpeg on the PATH.
 
+## Resolved questions
+
+- Reference style: videos like the Sheet Music Boss channel (use as the model for test fixtures and calibration tuning; no copyrighted videos committed to the repo).
+- Uploaded video files are supported in addition to YouTube URLs.
+
 ## Open questions
 
-1. Any sample videos to use as test fixtures (Synthesia style / channels)?
-2. Is an optional pitch-based hand split override per-note-range wanted in v1, or only the fallback single split?
-3. Should the app also accept an uploaded video file if YouTube downloads are blocked?
+1. Per-note-range hand overrides in v1, or only the single fallback split pitch? (Default: fallback split only.)
 
 ## Milestones
 
