@@ -28,6 +28,10 @@ export default function ResultView({ jobId, themeId, onAdjust, onReset }: Props)
     getResult(jobId).then(setRes).catch((e) => setError(e.message));
   }, [jobId]);
 
+  const tempos = res?.tempo_map?.map((t) => Math.round(t.bpm)) ?? [];
+  const changes = tempos.length > 1;
+  const tempoLabel = changes ? `${Math.min(...tempos)}–${Math.max(...tempos)}` : String(res?.bpm ?? "");
+  const tempoTitle = changes ? `${tempos.length - 1} tempo changes: ${tempos.join(" → ")} BPM` : "Steady tempo";
   const duration = useMemo(() => (res?.notes.length ? Math.max(...res.notes.map((n) => n.end)) : 0), [res]);
   const counts = useMemo(() => {
     const r = res?.notes.filter((n) => n.hand === "R").length ?? 0;
@@ -108,7 +112,7 @@ export default function ResultView({ jobId, themeId, onAdjust, onReset }: Props)
         <li><b>{res.notes.length}</b><span>notes</span></li>
         <li className="r"><b>{counts.R}</b><span>right hand</span></li>
         <li className="l"><b>{counts.L}</b><span>left hand</span></li>
-        <li><b>{res.bpm}</b><span>BPM</span></li>
+        <li title={tempoTitle}><b>{tempoLabel}</b><span>BPM</span></li>
         <li><b>{fmtTime(duration)}</b><span>length</span></li>
       </ul>
 

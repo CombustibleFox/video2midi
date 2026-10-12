@@ -7,7 +7,8 @@ GRIDS = {"1/4": 1.0, "1/8": 0.5, "1/16": 0.25, "1/32": 0.125}
 @dataclass
 class Settings:
     quantize: str = "1/32"  # key of GRIDS, or "off"
-    tempo_override: float | None = None  # BPM
+    tempo_override: float | None = None  # BPM; fixes the tempo for the whole piece
+    variable_tempo: bool = True  # follow tempo changes (ritardando, new sections) when quantizing
     split_pitch: int = 60  # fallback hand split: >= split is right hand
     min_note_s: float = 0.05
     gap_fill_frames: int = 1  # bridge detection dropouts up to this many frames

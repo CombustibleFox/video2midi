@@ -1,6 +1,7 @@
 export interface Settings {
   quantize: string;
   tempo_override: number | null;
+  variable_tempo: boolean;
   split_pitch: number;
   min_note_s: number;
   gap_fill_frames: number;
@@ -14,6 +15,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   quantize: "1/32",
   tempo_override: null,
+  variable_tempo: true,
   split_pitch: 60,
   min_note_s: 0.05,
   gap_fill_frames: 1,
@@ -57,6 +59,7 @@ export interface NoteOut {
 
 export interface Result {
   bpm: number;
+  tempo_map?: { time: number; beat: number; bpm: number }[];
   video_offset: number; // video time of the first note: video time = piano-roll time + this
   notes: NoteOut[];
 }

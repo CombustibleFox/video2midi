@@ -50,7 +50,7 @@ def main() -> None:
     shutil.copy(work / "output.mid", a.output)
     notes = res["notes"]
     right = sum(n["hand"] == "R" for n in notes)
-    print(f"wrote {a.output}: {len(notes)} notes ({right} right, {len(notes) - right} left), {res['bpm']} BPM")
+    print(f"wrote {a.output}: {len(notes)} notes ({right} right, {len(notes) - right} left), {res['bpm']} BPM" + (f" (tempo changes: {len(res['tempo_map']) - 1})" if len(res.get('tempo_map', [])) > 1 else ""))
     print(f"intermediate files in {work}")
 
 

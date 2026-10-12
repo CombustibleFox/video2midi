@@ -12,6 +12,7 @@ from .calibrate import Calibration
 from .clip import MAX_CLIP_S, cut_clip, grab_frame, video_duration
 from .jobs import JobManager
 from .midi_export import write_midi
+from .tempo import TempoMap
 from .notes import Note
 from .pipeline import write_preview
 from .settings import Settings
@@ -205,7 +206,7 @@ def midi(jid: str, hand: str = "both"):
     result = json.loads((job.dir / "notes.json").read_text())
     notes = [Note(**n) for n in result["notes"] if n["hand"] == hand]
     out = job.dir / f"output_{hand}.mid"
-    write_midi(notes, result["bpm"], str(out), job.settings.velocity)
+    write_midi(notes, TempoMap.from_list(result["tempo_map"]) if result.get("tempo_map") else result["bpm"], str(out), job.settings.velocity)
     return FileResponse(out, media_type="audio/midi", filename=f"output_{'right' if hand == 'R' else 'left'}_hand.mid")
 
 

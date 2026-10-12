@@ -57,6 +57,12 @@ ffmpeg is only needed if a downloaded video can't be decoded directly; install i
 
 Frame analysis runs in parallel: the video is cut into chunks and a pool of worker processes (one per CPU core, up to 8) analyses them, then the results are stitched back together in order. The output is identical to the single-process result. Use `--workers N` on the CLI (`--workers 1` to disable) or the `workers` setting in the API. On a 4-core machine a 3.7 minute 1686x948 video takes about 40 seconds.
 
+## Tempo changes
+
+The tempo is estimated over a sliding window, so ritardandos and sections at a new tempo come out as tempo events in the MIDI file instead of one steady tempo. Notes keep the times they were played at; only the beat grid they snap to follows the tempo. Turn it off with "Follow tempo changes" in the settings (or set a tempo override) to get a single tempo.
+
+Limits: the exact bar where a change happens can't always be told from the notes alone, so after a change the beat grid can sit a fraction of a beat off the original score. Relative rhythm within each tempo section is kept. A tempo and its double fit the notes equally well, so the slower one is preferred (tempos are searched between 55 and 140 BPM).
+
 ## Video quality
 
 Detection works best on 720p or 1080p downloads. At 360p the keys are only a few pixels wide and the seam between two back-to-back notes of the same pitch can shrink to one pixel, so some repeated black-key notes get merged. Everything else (pitches, hands, timing) still works at 360p.

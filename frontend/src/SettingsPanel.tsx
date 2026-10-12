@@ -17,6 +17,11 @@ export default function SettingsPanel({ value, onChange }: Props) {
         <input type="number" min={20} max={300} placeholder="auto" value={value.tempo_override ?? ""}
           disabled={value.quantize === "off"} onChange={(e) => set({ tempo_override: num(e.target.value) })} />
       </label>
+      <label className="check" title="Follow ritardandos and new sections with tempo changes in the MIDI. Off writes one steady tempo. A tempo override also turns this off.">
+        <input type="checkbox" checked={value.variable_tempo && value.tempo_override == null} disabled={value.quantize === "off" || value.tempo_override != null}
+          onChange={(e) => set({ variable_tempo: e.target.checked })} />
+        Follow tempo changes
+      </label>
       <label title="Used when the video has only one note color: notes at or above this pitch go to the right hand. 60 = middle C.">
         Hand split pitch (one-color videos)
         <input type="number" min={0} max={127} value={value.split_pitch} onChange={(e) => set({ split_pitch: num(e.target.value) ?? 60 })} />
