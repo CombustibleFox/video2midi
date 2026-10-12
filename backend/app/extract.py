@@ -17,6 +17,7 @@ BAR_SAT_MIN, BAR_VAL_MIN = 40, 90  # falling bars can be paler than the lit keys
 LABEL_SAT_MAX, LABEL_VAL_MIN = 62, 150  # light, desaturated pixels: note-name labels (gray-white on dark bars)
 DARK_LINE_RATIO, DARK_LINE_MIN_LEVEL = 0.72, 130  # a seam row is this much dimmer than the bar around it
 MIN_SEAM_ROWS_PER_PX = 0.0019  # a real seam is a band of dark rows about this fraction of the frame height thick
+MAX_BRIDGE_FRAMES = 4  # key-off dropouts up to this long between touching notes are animation, not silence
 MAX_SEAM_GAP = 25  # px; wider gaps are real rests that the key signal already shows
 MIN_SEAM_VOTES = 3  # frames that must agree on a seam
 SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys: glow and flares live there
@@ -38,7 +39,7 @@ class Labels:
     fps: float
     first: int  # absolute index of the first frame
     bottoms: np.ndarray  # (frames, keys): lowest bar row above the key, -1 if none
-    seams: dict[int, list[tuple[int, int, int]]]  # key index -> (frame, lower bar top row, upper bar bottom row)
+    seams: dict[int, list[tuple[int, int, int]]]  # key index -> (frame, seam center row, seam thickness in rows)
     seam_rows: tuple[int, int]  # absolute pixel rows (y_lo, y_hi) searched above the keyboard
 
 
@@ -167,7 +168,7 @@ def make_plan(cal: Calibration, s: Settings, ref: np.ndarray | None) -> Plan:
 
 
 def _seams_in_frame(hi_rows: np.ndarray, lo_rows: np.ndarray, idx: int, y_lo: int, min_rows: int = 1) -> list[tuple[int, tuple[int, int, int]]]:
-    """Seams between two bars: a short run of 'gap' rows with solid bar just above and just below."""
+    """Seams between two bars (observation = frame, center row, thickness in rows): a short run of 'gap' rows with solid bar just above and just below."""
     cut, K = lo_rows.shape
     LT, HT = lo_rows.T, hi_rows.T  # (keys, rows)
     prev = np.zeros_like(LT)
@@ -183,7 +184,7 @@ def _seams_in_frame(hi_rows: np.ndarray, lo_rows: np.ndarray, idx: int, y_lo: in
     above = csh[ks, g0] - csh[ks, np.maximum(0, g0 - 3)] > 0
     below = csh[ks, np.minimum(cut, g1 + 4)] - csh[ks, g1 + 1] > 0
     ok = (g1 - g0 + 1 >= min_rows) & (g1 - g0 + 1 <= MAX_SEAM_GAP) & above & below
-    return [(int(k), (idx, int(y_lo + (a + b) // 2), int(y_lo + (a + b) // 2)))
+    return [(int(k), (idx, int(y_lo + (a + b) // 2), int(b - a + 1)))
             for k, a, b in zip(ks[ok], g0[ok], g1[ok])]
 
 
@@ -408,22 +409,23 @@ def estimate_fall(L: Labels) -> tuple[float, float] | None:
 
 
 def seam_splits(L: Labels, fall: tuple[float, float]) -> dict[int, list[tuple[float, float]]]:
-    """Per key: (note_end_frame, next_note_start_frame) for each seam between back-to-back bars."""
+    """Per key: (frame where the seam reaches the keys, seam thickness in frames) for each seam between
+    back-to-back bars."""
     spf, yref = fall
     out: dict[int, list[tuple[float, float]]] = {}
     for k, obs in L.seams.items():
-        pts = sorted(((f + (yref - lower_top) / spf, f + (yref - upper_bottom) / spf, lower_top) for f, lower_top, upper_bottom in obs))
-        groups: list[list[tuple[float, float, int]]] = []
+        pts = sorted(((f + (yref - y) / spf, y, thick / spf) for f, y, thick in obs))
+        groups: list[list[tuple[float, int, float]]] = []
         for pt in pts:
             if groups and abs(pt[0] - np.median([x[0] for x in groups[-1]])) <= 1.5:
                 groups[-1].append(pt)
             else:
                 groups.append([pt])
         for g in groups:
-            rows = [x[2] for x in g]
+            rows = [x[1] for x in g]
             # a real seam travels down the screen as the frames advance; a fixed artifact does not
             if len(g) >= MIN_SEAM_VOTES and max(rows) - min(rows) >= 1.5 * spf:
-                out.setdefault(k, []).append((float(np.median([x[0] for x in g])), float(np.median([x[1] for x in g]))))
+                out.setdefault(k, []).append((float(np.median([x[0] for x in g])), float(np.median([x[2] for x in g]))))
     return out
 
 
@@ -446,15 +448,37 @@ def labels_to_notes(L: Labels, s: Settings, n_colors: int) -> list[tuple[int, fl
                 merged[-1][2] = r[2]
             else:
                 merged.append(list(r))
+        # Some videos switch the key light off for a couple of frames between touching repeats. When the
+        # bars show a seam there, the notes touch: join the runs and let the seam decide where they split.
+        # A real rest leaves no seam and is kept.
+        seams_k = sorted(splits.get(k, []))
+        dropped: set[int] = set()  # extra seam clusters around a bridged gap: cut at one seam only
+        joined: list[list[int]] = []
+        for i, r in enumerate(merged):
+            near = [j for j, (e, _) in enumerate(seams_k) if r[1] - 3 <= e - first_frame <= r[2] + 3]
+            if (r[0] == 0 and joined and joined[-1][0] != 0 and i + 1 < len(merged)
+                    and merged[i + 1][0] == joined[-1][0] and r[2] - r[1] <= MAX_BRIDGE_FRAMES and near):
+                centre = (r[1] + r[2]) / 2
+                best = min(near, key=lambda j: abs(seams_k[j][0] - first_frame - centre))
+                dropped.update(j for j in near if j != best)
+                joined[-1][2] = r[2]
+                continue
+            if joined and joined[-1][0] == r[0] and joined[-1][2] == r[1]:
+                joined[-1][2] = r[2]
+            else:
+                joined.append(list(r))
+        merged = joined
         for val, a, b in merged:
             if not val:
                 continue
             starts, ends = [float(a)], []
-            for e, st in sorted(splits.get(k, [])):
-                e, st = e - first_frame, st - first_frame
-                if a + 1 < e < b - 1 and a < st < b and st >= e - 0.5:
+            for j, (e, _thick) in enumerate(seams_k):
+                if j in dropped:
+                    continue
+                e -= first_frame
+                if a + 1 < e < b - 1:
                     ends.append(e)
-                    starts.append(max(st, e))
+                    starts.append(e)
             ends.append(float(b))
             for st, en in zip(starts, ends):
                 if en - st >= min_frames:

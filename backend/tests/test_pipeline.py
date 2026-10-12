@@ -199,3 +199,52 @@ def test_thick_seam_still_splits_at_1080p(tmp_path):
     res = run_extraction(path, tmp_path, cal, s)
     got = sorted((n["pitch"], round(n["start"], 1)) for n in res["notes"])
     assert got == sorted((p, round(a - 0.5, 1)) for p, a, b, h in notes)
+
+
+def _gaps_between_repeats(res):
+    by = {}
+    for n in res["notes"]:
+        by.setdefault(n["pitch"], []).append(n)
+    out = []
+    for lst in by.values():
+        lst.sort(key=lambda n: n["start"])
+        out += [b["start"] - a["end"] for a, b in zip(lst, lst[1:])]
+    return out
+
+
+def test_key_light_dropout_between_touching_repeats_is_closed(tmp_path):
+    """Some videos switch the key light off ~2 frames between touching repeats. The notes still touch."""
+    notes = []
+    t = 0.5
+    for p, hand in ((60, "R"), (48, "L"), (64, "R")):
+        for _ in range(3):
+            notes.append((p, t, t + 0.3, hand))
+            t += 0.3
+        t += 0.6
+    path = tmp_path / "dropout.avi"
+    render_video(path, notes, speed=240.0, seam_px=6, key_gap_s=0.07)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    gaps = _gaps_between_repeats(res)
+    assert len(res["notes"]) == 9
+    assert max(gaps) < 0.03, gaps  # touching, not 70 ms apart
+
+
+def test_real_rest_between_repeats_is_kept(tmp_path):
+    """A genuine rest has no seam (the bars are visibly apart), so it must not be closed."""
+    notes = []
+    t = 0.5
+    for p, hand in ((60, "R"), (48, "L"), (64, "R")):
+        for _ in range(3):
+            notes.append((p, t, t + 0.3, hand))
+            t += 0.55  # 0.25 s of silence between repeats
+        t += 0.6
+    path = tmp_path / "rests.avi"
+    render_video(path, notes, speed=240.0, seam_px=6, key_gap_s=0.07)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    gaps = _gaps_between_repeats(res)
+    assert len(res["notes"]) == 9
+    assert min(g for g in gaps if g < 1.0) > 0.2, gaps
