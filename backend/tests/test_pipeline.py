@@ -111,3 +111,14 @@ def test_back_to_back_repeats_are_split(tmp_path):
     t0 = 0.5
     want = sorted((p, round(a - t0, 1)) for p, a, b, h in notes)
     assert got == want
+
+
+def test_labels_on_bars_do_not_split_notes(tmp_path):
+    """A white label across a narrow black-key bar looks like a gap in the bar color but is not a seam."""
+    notes = [(61, 0.5, 1.4, "R"), (66, 2.0, 2.9, "R"), (48, 0.5, 1.4, "L"), (60, 2.0, 2.9, "L")]
+    path = tmp_path / "lab.avi"
+    render_video(path, notes, speed=240.0, seam_px=4, labels=True)
+    s = Settings(quantize="off")
+    cal = run_calibration(path, tmp_path, s)
+    res = run_extraction(path, tmp_path, cal, s)
+    assert sorted(n["pitch"] for n in res["notes"]) == [48, 60, 61, 66]

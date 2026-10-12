@@ -14,6 +14,7 @@ KEY_VAL_WHITE = 100
 KEY_VAL_BLACK = 150
 ON_FRACTION = 0.6
 BAR_SAT_MIN, BAR_VAL_MIN = 40, 90  # falling bars can be paler than the lit keys
+LABEL_SAT_MAX, LABEL_VAL_MIN = 60, 170  # white-ish pixels: note-name labels
 MAX_SEAM_GAP = 25  # px; wider gaps are real rests that the key signal already shows
 MIN_SEAM_VOTES = 3  # frames that must agree on a seam
 SEAM_GLOW_FRAC = 0.05  # ignore this fraction of the frame height above the keys: glow and flares live there
@@ -164,9 +165,14 @@ def label_frames(video_path: str, cal: Calibration, s: Settings, ref: np.ndarray
             side = ((cs[:, le] - cs[:, lw]) + (cs[:, re] - cs[:, rs])) / ((le - lw) + (re - rs))
             cut = max(2, (cal.top - int(SEAM_GLOW_FRAC * cal.height)) - y_lo)
             lane = (cs[:, gb] - cs[:, ga]) / (gb - ga)
+            # label glyphs are white; the gap between two bars is plain background, never white
+            white = (reg[..., 1] < LABEL_SAT_MAX) & (reg[..., 2] > LABEL_VAL_MIN)
+            ws = np.zeros((white.shape[0], white.shape[1] + 1), np.int32)
+            ws[:, 1:] = white.cumsum(axis=1)
+            lane_white = (ws[:, gb] - ws[:, ga]) / (gb - ga)
             # clean gap: nothing of the bar color across the lane. Edge notch (white keys only): the
             # rounded corners of two touching bars dent both edges, while the middle stays solid.
-            lo_rows = (lane[:cut] < 0.12) | (~black & (side[:cut] < 0.5))
+            lo_rows = ((lane[:cut] < 0.12) & (lane_white[:cut] < 0.03)) | (~black & (side[:cut] < 0.5))
             hi_rows = (lane[:cut] > 0.5) & (black | (side[:cut] > 0.7))
             for k in np.flatnonzero(hi_rows.any(axis=0)):
                 lo_k = np.flatnonzero(lo_rows[:, k])

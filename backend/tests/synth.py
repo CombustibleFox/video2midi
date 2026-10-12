@@ -23,7 +23,7 @@ def layout(first_midi, n_white, width):
 
 
 def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, kb_h=120,
-                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0):
+                 speed=300.0, intro_s=0.0, tail_s=1.0, glow=False, seam_px=0, labels=False):
     """notes: list of (pitch, on, off, 'R'|'L'). Notes start after intro_s."""
     keys = layout(first_midi, n_white, w)
     kb_y = h - kb_h
@@ -58,6 +58,11 @@ def render_video(path, notes, first_midi=21, n_white=52, w=1280, h=720, fps=30, 
             top = kb_y - (b - t) * speed + seam_px / 2
             if bottom > 0 and top < kb_y and bottom > top:
                 img[max(0, int(top)) : int(bottom), x0:x1] = col
+            if labels and bottom - top > 40:  # a white note-name blob mid-bar; wide on black keys
+                cy = int((top + bottom) / 2)
+                lx0, lx1 = (x0, x1) if black else (int(xc - kw * 0.3), int(xc + kw * 0.3))
+                if 0 <= cy - 5 and cy + 5 < kb_y:
+                    img[cy - 5 : cy + 5, lx0:lx1] = (250, 250, 250)
             if black and a <= t < b:
                 img[kb_y : kb_y + int(0.6 * kb_h), x0:x1] = col
         if glow:  # sparks and glow where the notes land, like real videos
