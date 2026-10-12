@@ -2,6 +2,7 @@ name: Build executables
 on:
   workflow_dispatch:
   push:
+    branches: [claude/synthesia-youtube-midi-converter-oo2uh6]
     tags: ["v*"]
 
 jobs:
